@@ -26,6 +26,7 @@ public class Agent {
 class AgentAPI {
     private let token: String
     private let baseURL: String
+    private let urlSession = URLSession(configuration: URLSessionConfiguration.default)
 
     init(config: AgentConfig) {
         self.token = config.token
@@ -38,7 +39,6 @@ class AgentAPI {
             memory = AgentInitialMemory(variables: options.variables, secrets: options.secrets)
         }
         let request = AgentChatRequest(token: token, userMessageText: text, conversationID: conversationID, encryptionKey: encryptionKey, streamTransferEvents: true, memory: memory)
-        let urlSession = URLSession.shared
         var urlRequest = URLRequest(url: URL(string: "\(baseURL)/-/api/chat")!)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
