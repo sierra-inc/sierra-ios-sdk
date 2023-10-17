@@ -1,6 +1,7 @@
 // Copyright Sierra
 
 import Foundation
+import UIKit
 
 public struct ConversationOptions {
     public var variables: [String: String]?
@@ -12,6 +13,13 @@ public struct ConversationOptions {
 /// Conversation encapsulates the UI state of a agent conversation
 public class Conversation {
     public var messages: [Message] = []
+    public var canSend: Bool = true {
+        didSet {
+            forEachDelegate { delegate in
+                delegate.conversation(self, didChangeCanSend: self.canSend)
+            }
+        }
+    }
 
     private let api: AgentAPI
     private let options: ConversationOptions?
@@ -58,9 +66,14 @@ public class Conversation {
                }
            }
        }
-   }
+    }
 
     public func sendUserMessage(text: String) async {
+        if !canSend {
+            debugLog("Cannot send message, send already in progress")
+            return
+        }
+        canSend = false
         let userMessage = Message(role: .user, content: text)
         messages.append(userMessage)
 
@@ -129,6 +142,7 @@ public class Conversation {
                             delegate.conversation(self, didTransfer: conversationTransfer)
                         }
                     case .error(let error):
+                        debugLog("Agent error event: \(error)")
                         if hasAssistantMessagePlaceholder {
                             messages.remove(at: assistantMessageIndex)
                             forEachDelegate { [assistantMessageID] delegate in
@@ -142,6 +156,7 @@ public class Conversation {
                 }
             }
         } catch {
+            debugLog("Cannot begin conversation, error: \(error)")
             if hasAssistantMessagePlaceholder {
                 messages.remove(at: assistantMessageIndex)
                 forEachDelegate { delegate in
@@ -152,6 +167,7 @@ public class Conversation {
                 delegate.conversation(self, didHaveError: error)
             }
         }
+        canSend = true
     }
 }
 
@@ -161,6 +177,7 @@ public protocol ConversationDelegate : AnyObject {
     func conversation(_ conversation: Conversation, didChangeMessage messageID: MessageID)
     func conversation(_ conversation: Conversation, didHaveError error: Error)
     func conversation(_ conversation: Conversation, didTransfer transfer: ConversationTransfer)
+    func conversation(_ conversation: Conversation, didChangeCanSend canSend: Bool)
 }
 
 // Default no-op implementations of ConversationDelegate, so that clients can
@@ -171,6 +188,7 @@ public extension ConversationDelegate {
     func conversation(_ conversation: Conversation, didChangeMessage messageID: MessageID) {}
     func conversation(_ conversation: Conversation, didHaveError error: Error) {}
     func conversation(_ conversation: Conversation, didTransfer transfer: ConversationTransfer) {}
+    func conversation(_ conversation: Conversation, didChangeCanSend canSend: Bool) {}
 }
 
 public typealias MessageID = UUID
@@ -185,9 +203,40 @@ public struct Message: Identifiable {
     public let role: Role
 
     public var content: String
+
+    public func attributedContent(font: UIFont? = nil, textColor: UIColor? = nil) -> AttributedString? {
+        guard let contentData = content.data(using: .utf8) else { return nil }
+        var attributedString: AttributedString
+        do {
+            attributedString = try AttributedString(
+                markdown: contentData,
+                options: AttributedString.MarkdownParsingOptions(
+                    allowsExtendedAttributes: true,
+                    interpretedSyntax: .inlineOnlyPreservingWhitespace,
+                    failurePolicy: .returnPartiallyParsedIfPossible
+                )
+            )
+        } catch {
+            // Should not happen because we use returnPartiallyParsedIfPossible
+            return nil
+        }
+        if let font {
+            attributedString.font = font
+        }
+        if let textColor {
+            attributedString.foregroundColor = textColor
+        }
+        return attributedString
+    }
 }
 
 public struct ConversationTransfer {
     public let isSynchronous: Bool
     public let data: Dictionary<String, String>
+}
+
+func debugLog(_ message: String) {
+    #if DEBUG
+    debugPrint(message)
+    #endif
 }

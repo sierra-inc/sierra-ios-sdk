@@ -1,6 +1,7 @@
 // Copyright Sierra
 
 import Foundation
+import UIKit
 
 public struct AgentConfig {
     public let token: String
@@ -24,9 +25,22 @@ public class Agent {
 }
 
 class AgentAPI {
+    private static let API_COMPATIBILITY_DATE = "2023-10-16"
+
     private let token: String
     private let baseURL: String
-    private let urlSession = URLSession(configuration: URLSessionConfiguration.default)
+    private let urlSession = {
+        let config = URLSessionConfiguration.default
+        let hostAppIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
+        let hostAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+        let iosModel = UIDevice.current.model
+        let iosVersion = UIDevice.current.systemVersion
+        config.httpAdditionalHeaders = [
+            "User-Agent": "Sierra-iOS-SDK (\(hostAppIdentifier)/\(hostAppVersion) \(iosModel)/\(iosVersion))",
+            "Sierra-API-Compatibility-Date": API_COMPATIBILITY_DATE,
+        ]
+        return URLSession(configuration: config)
+    }()
 
     init(config: AgentConfig) {
         self.token = config.token
@@ -45,7 +59,7 @@ class AgentAPI {
         urlRequest.httpBody = try JSONEncoder().encode(request)
 
         return AsyncThrowingStream { continuation in
-            let listener = AgentChatUpdateListener(urlSession: URLSession.shared, urlRequest: urlRequest) { update in
+            let listener = AgentChatUpdateListener(urlSession: urlSession, urlRequest: urlRequest) { update in
                 continuation.yield(update)
             } onComplete: { error in
                 continuation.finish(throwing: error)

@@ -77,14 +77,14 @@ class InputController : UIViewController, UITextViewDelegate {
 
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         if text == "\n" {
-            let messageText = textView.text.trimmingCharacters(in: .whitespaces)
-            if messageText.count > 0 {
+            let messageText = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if conversation.canSend && messageText.count > 0 {
                 Task {
-                    await conversation.sendUserMessage(text: messageText.trimmingCharacters(in: .whitespacesAndNewlines))
+                    await conversation.sendUserMessage(text: messageText)
                 }
                 textView.text = ""
-                return false
             }
+            return false
         }
         return true
     }

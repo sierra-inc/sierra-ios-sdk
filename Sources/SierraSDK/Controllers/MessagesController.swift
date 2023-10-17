@@ -288,6 +288,13 @@ private class MessageCell: UITableViewCell {
             NSLayoutConstraint.deactivate(assistantConstraints)
             NSLayoutConstraint.activate(userConstraints)
         }
+
+        if message.role == .assistant {
+            if let attributedContent = message.attributedContent(font: UIFont.preferredFont(forTextStyle: .body), textColor: textView.textColor) {
+                textView.attributedText = NSMutableAttributedString(attributedContent)
+                return
+            }
+        }
         textView.text = message.content
     }
 }
