@@ -53,7 +53,7 @@ public struct ChatStyleLayout {
 public let DEFAULT_CHAT_STYLE_LAYOUT = ChatStyleLayout(
     bubbleXPadding: 12,
     bubbleYPadding: 11,
-    bubbleXMargin: 16,
+    bubbleXMargin: 0,
     bubbleYMargin: 8,
     bubbleMaxWidthFraction: 0.85,
     bubbleMaxWidthAbsolute: 600

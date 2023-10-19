@@ -25,7 +25,6 @@ class InputController : UIViewController, UITextViewDelegate {
         input.adjustsFontForContentSizeCategory = true
         input.accessibilityLabel = NSLocalizedString("Message", comment: "Accessibility label for the message input field in the chat")
         input.backgroundColor = .systemBackground
-        input.layer.borderColor = UIColor.systemFill.cgColor
         input.layer.borderWidth = 1
         input.layer.cornerRadius = 16
         input.layer.masksToBounds = true
@@ -47,6 +46,14 @@ class InputController : UIViewController, UITextViewDelegate {
             inputTextView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         showPlaceholder()
+        updateLayerColors()
+    }
+
+    override open func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+       super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            updateLayerColors()
+        }
     }
 
     private func showPlaceholder() {
@@ -59,6 +66,10 @@ class InputController : UIViewController, UITextViewDelegate {
         inputTextView.text = nil
         inputTextView.textColor = .label
         placeholderVisible = false
+    }
+
+    private func updateLayerColors() {
+        inputTextView.layer.borderColor = UIColor.systemFill.cgColor
     }
 
     // MARK: UITextViewDelegate

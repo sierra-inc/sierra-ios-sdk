@@ -52,6 +52,7 @@ class MessagesController : UITableViewController, ConversationDelegate {
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 44
         tableView.allowsSelection = false
+        tableView.cellLayoutMarginsFollowReadableWidth = true
 
         if let disclosure = options.disclosure, !disclosure.isEmpty {
             // The disclosure is logically a header, but because of the flipped layout it needs
@@ -244,6 +245,9 @@ private class MessageCell: UITableViewCell {
         if layout.bubbleMaxWidthAbsolute > 0 {
             textView.widthAnchor.constraint(lessThanOrEqualToConstant: layout.bubbleMaxWidthAbsolute).isActive = true
         }
+
+        let leadingAnchor = readableContentGuide.leadingAnchor
+        let trailingAnchor = readableContentGuide.trailingAnchor
 
         userConstraints = [
             textView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -layout.bubbleXMargin),

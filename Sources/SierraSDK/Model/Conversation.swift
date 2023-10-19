@@ -77,7 +77,7 @@ public class Conversation {
         let userMessage = Message(role: .user, content: text)
         messages.append(userMessage)
 
-        var assistantMessage = Message(role: .assistant, content: "…")
+        var assistantMessage = Message(role: .assistant, content: "•••")
         var assistantMessageIndex = messages.count
         var assistantMessageID = assistantMessage.id
         messages.append(assistantMessage)
@@ -121,7 +121,7 @@ public class Conversation {
                             assistantMessageIndex = -1
                         }
                         if let preparingFollowup, preparingFollowup {
-                            assistantMessage = Message(role: .assistant, content: "…")
+                            assistantMessage = Message(role: .assistant, content: "•••")
                             assistantMessageIndex = messages.count
                             assistantMessageID = assistantMessage.id
                             messages.append(assistantMessage)
