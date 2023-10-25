@@ -148,6 +148,7 @@ public class Conversation {
                             forEachDelegate { [assistantMessageID] delegate in
                                 delegate.conversation(self, didRemoveMessage: assistantMessageID)
                             }
+                            hasAssistantMessagePlaceholder = false
                         }
                         forEachDelegate { delegate in
                             delegate.conversation(self, didHaveError: AgentChatError.serverError(error))
