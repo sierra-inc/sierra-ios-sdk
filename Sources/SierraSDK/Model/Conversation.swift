@@ -23,8 +23,7 @@ public class Conversation {
 
     private let api: AgentAPI
     private let options: ConversationOptions?
-    private var id: String?
-    private var encryptionKey: String?
+    private var state: String?
     private var delegates = NSHashTable<AnyObject>.weakObjects()
 
     init(api: AgentAPI, options: ConversationOptions?) {
@@ -87,73 +86,85 @@ public class Conversation {
 
         var hasAssistantMessagePlaceholder = true
         do {
-            let stream = try await api.sendMessage(text: text, conversationID: id, encryptionKey: encryptionKey, options: options)
-            for try await update in stream {
-                switch update {
-                case .setConversationID(let chunk):
-                    id = chunk.conversationID
-                case .setEncryptionKey(let chunk):
-                    encryptionKey = chunk.encryptionKey
-                case .event(let event):
-                    switch event {
-                    case .message(let messageText, let isEndOfMessage, let preparingFollowup):
-                        if let messageText {
-                            if assistantMessageIndex == -1 {
-                                assistantMessage = Message(role: .assistant, content: "")
-                                assistantMessageIndex = messages.count
-                                assistantMessageID = assistantMessage.id
-                                messages.append(assistantMessage)
-                                forEachDelegate { [assistantMessageID] delegate in
-                                    delegate.conversation(self, didAddMessages: [assistantMessageID])
-                                }
-                            }
-                            if hasAssistantMessagePlaceholder {
-                                messages[assistantMessageIndex].content = messageText
-                                hasAssistantMessagePlaceholder = false
-                            } else {
-                                messages[assistantMessageIndex].content += messageText
-                            }
-                            forEachDelegate { [assistantMessageID] delegate in
-                                delegate.conversation(self, didChangeMessage: assistantMessageID)
-                            }
-                        }
-                        if let isEndOfMessage, isEndOfMessage {
-                            assistantMessageIndex = -1
-                        }
-                        if let preparingFollowup, preparingFollowup {
-                            assistantMessage = Message(role: .assistant, content: "•••")
+            let stream = try await api.sendMessage(text: text, state: state, options: options)
+            for try await event in stream {
+                switch event.type {
+                case "state":
+                    state = event.state
+                case "message":
+                    guard let message = event.message else { continue }
+                    if message.role != "assistant" {
+                        continue
+                    }
+                    let messageText = message.text
+                    let isEndOfMessage = message.isEndOfMessage
+                    let preparingFollowup = message.preparingFollowup
+                    if let messageText {
+                        if assistantMessageIndex == -1 {
+                            assistantMessage = Message(role: .assistant, content: "")
                             assistantMessageIndex = messages.count
                             assistantMessageID = assistantMessage.id
                             messages.append(assistantMessage)
                             forEachDelegate { [assistantMessageID] delegate in
                                 delegate.conversation(self, didAddMessages: [assistantMessageID])
                             }
-                            hasAssistantMessagePlaceholder = true
                         }
-                    case .state:
-                        // State updates are ignored, and will be removed in the public API.
-                        break
-                    case .transfer(let transfer):
-                        let conversationTransfer = ConversationTransfer(
-                            isSynchronous: transfer.isSynchronous ?? false,
-                            data: Dictionary(uniqueKeysWithValues: transfer.data?.map{ ($0.key, $0.value) } ?? [])
-                        )
-                        forEachDelegate { delegate in
-                            delegate.conversation(self, didTransfer: conversationTransfer)
-                        }
-                    case .error(let error):
-                        debugLog("Agent error event: \(error)")
                         if hasAssistantMessagePlaceholder {
-                            messages.remove(at: assistantMessageIndex)
-                            forEachDelegate { [assistantMessageID] delegate in
-                                delegate.conversation(self, didRemoveMessage: assistantMessageID)
-                            }
+                            messages[assistantMessageIndex].content = messageText
                             hasAssistantMessagePlaceholder = false
+                        } else {
+                            messages[assistantMessageIndex].content += messageText
                         }
-                        forEachDelegate { delegate in
-                            delegate.conversation(self, didHaveError: AgentChatError.serverError(error))
+                        forEachDelegate { [assistantMessageID] delegate in
+                            delegate.conversation(self, didChangeMessage: assistantMessageID)
                         }
                     }
+                    if let isEndOfMessage, isEndOfMessage {
+                        assistantMessageIndex = -1
+                    }
+                    if let preparingFollowup, preparingFollowup {
+                        assistantMessage = Message(role: .assistant, content: "•••")
+                        assistantMessageIndex = messages.count
+                        assistantMessageID = assistantMessage.id
+                        messages.append(assistantMessage)
+                        forEachDelegate { [assistantMessageID] delegate in
+                            delegate.conversation(self, didAddMessages: [assistantMessageID])
+                        }
+                        hasAssistantMessagePlaceholder = true
+                    }
+                case "transfer":
+                    guard let transfer = event.transfer else { continue }
+                    if hasAssistantMessagePlaceholder {
+                        messages.remove(at: assistantMessageIndex)
+                        forEachDelegate { [assistantMessageID] delegate in
+                            delegate.conversation(self, didRemoveMessage: assistantMessageID)
+                        }
+                        hasAssistantMessagePlaceholder = false
+                        assistantMessageIndex = -1
+                    }
+                    let conversationTransfer = ConversationTransfer(
+                        isSynchronous: transfer.isSynchronous ?? false,
+                        data: transfer.data ?? [:]
+                    )
+                    forEachDelegate { delegate in
+                        delegate.conversation(self, didTransfer: conversationTransfer)
+                    }
+                case "error":
+                    guard let error = event.error else { continue }
+                    let errorMessage = error.userVisibleMessage
+                    if hasAssistantMessagePlaceholder {
+                        messages.remove(at: assistantMessageIndex)
+                        forEachDelegate { [assistantMessageID] delegate in
+                            delegate.conversation(self, didRemoveMessage: assistantMessageID)
+                        }
+                        hasAssistantMessagePlaceholder = false
+                        assistantMessageIndex = -1
+                    }
+                    forEachDelegate { delegate in
+                        delegate.conversation(self, didHaveError: nil, withMessage: errorMessage)
+                    }
+                default:
+                    debugLog("Unknown event type: \(event.type)")
                 }
             }
         } catch {
@@ -165,7 +176,7 @@ public class Conversation {
                 }
             }
             forEachDelegate { delegate in
-                delegate.conversation(self, didHaveError: error)
+                delegate.conversation(self, didHaveError: error, withMessage: nil)
             }
         }
         canSend = true
@@ -176,7 +187,7 @@ public protocol ConversationDelegate : AnyObject {
     func conversation(_ conversation: Conversation, didAddMessages messageIDs: [MessageID])
     func conversation(_ conversation: Conversation, didRemoveMessage messageID: MessageID)
     func conversation(_ conversation: Conversation, didChangeMessage messageID: MessageID)
-    func conversation(_ conversation: Conversation, didHaveError error: Error)
+    func conversation(_ conversation: Conversation, didHaveError error: Error?, withMessage message: String?)
     func conversation(_ conversation: Conversation, didTransfer transfer: ConversationTransfer)
     func conversation(_ conversation: Conversation, didChangeCanSend canSend: Bool)
 }
@@ -187,7 +198,7 @@ public extension ConversationDelegate {
     func conversation(_ conversation: Conversation, didAddMessages messageIDs: [MessageID]) {}
     func conversation(_ conversation: Conversation, didRemoveMessage messageID: MessageID) {}
     func conversation(_ conversation: Conversation, didChangeMessage messageID: MessageID) {}
-    func conversation(_ conversation: Conversation, didHaveError error: Error) {}
+    func conversation(_ conversation: Conversation, didHaveError error: Error?, withMessage message: String?) {}
     func conversation(_ conversation: Conversation, didTransfer transfer: ConversationTransfer) {}
     func conversation(_ conversation: Conversation, didChangeCanSend canSend: Bool) {}
 }

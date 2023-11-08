@@ -6,6 +6,7 @@ class MessagesController : UITableViewController, ConversationDelegate {
     private let conversation: Conversation
     private let options: MessagesControllerOptions
     private var conversationError: Error?
+    private var conversationErrorMessage: String?
     // Errors are at the bottom, but are listed first due to the bottom-anchored transform
     private static let sections: [Section] = [.error, .messages]
 
@@ -33,7 +34,7 @@ class MessagesController : UITableViewController, ConversationDelegate {
                 }
                 if MessagesController.sections[indexPath.section] == Section.error {
                     let cell = tableView.dequeueReusableCell(withIdentifier: ErrorCell.reuseIdentifier, for: indexPath) as! ErrorCell
-                    cell.message = self.options.errorMessage
+                    cell.message = self.conversationErrorMessage ?? self.options.errorMessage
                     return cell
                 }
                 return nil
@@ -101,6 +102,7 @@ class MessagesController : UITableViewController, ConversationDelegate {
             snapshot.insertItems(messageIDs.reversed(), beforeItem: existingMessageIDs[0])
         }
         self.conversationError = nil
+        self.conversationErrorMessage = nil
         if snapshot.numberOfItems(inSection: .error) > 0 {
             snapshot.deleteItems([ErrorCell.id])
         }
@@ -119,8 +121,9 @@ class MessagesController : UITableViewController, ConversationDelegate {
         dataSource.apply(snapshot, animatingDifferences: false)
     }
 
-    func conversation(_ conversation: Conversation, didHaveError error: Error) {
+    func conversation(_ conversation: Conversation, didHaveError error: Error?, withMessage message: String?) {
         self.conversationError = error
+        self.conversationErrorMessage = message
         var snapshot = dataSource.snapshot()
         if snapshot.numberOfItems(inSection: .error) == 0 {
             snapshot.appendItems([ErrorCell.id], toSection: .error)
@@ -216,6 +219,7 @@ private class MessageCell: UITableViewCell {
         let imageView = UIImageView()
         imageView.image = UIImage(named: "BubbleTail", in: .module, compatibleWith: nil)
         imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.tintAdjustmentMode = .normal
         return imageView
     }()
 

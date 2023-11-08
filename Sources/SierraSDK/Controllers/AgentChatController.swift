@@ -12,7 +12,8 @@ public struct AgentChatControllerOptions {
     /// Secondary text to display above the agent message at the start of a conversation.
     public var disclosure: String?
 
-    /// Message shown when an error is encountered during the conversation.
+    /// Message shown when an error is encountered during the conversation unless the
+    /// server provided an alternate message to display.
     public var errorMessage: String = "Oops, an error was encountered! Please try again."
 
     /// Placeholder value displayed in the chat input when it is empty.
