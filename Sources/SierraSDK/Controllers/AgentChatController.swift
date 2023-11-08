@@ -36,12 +36,14 @@ public struct AgentChatControllerOptions {
 }
 
 public class AgentChatController : UIViewController {
+    private let options: AgentChatControllerOptions
     private let conversation: Conversation
     private let messagesController: MessagesController
     private let inputController: InputController
     private weak var optionsConversationDelegate: ConversationDelegate?
 
     public init(agent: Agent, options: AgentChatControllerOptions) {
+        self.options = options
         conversation = agent.newConversation(options: options.conversationOptions)
         if !options.greetingMessage.isEmpty {
             conversation.addGreetingMessage(options.greetingMessage)
@@ -78,7 +80,7 @@ public class AgentChatController : UIViewController {
     public override func loadView() {
         let view = UIView(frame: UIScreen.main.bounds)
         view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = options.chatStyle.colors.backgroundColor
         self.view = view
 
         let messagesView = messagesController.view!

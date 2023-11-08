@@ -34,6 +34,7 @@ class MessagesController : UITableViewController, ConversationDelegate {
                 }
                 if MessagesController.sections[indexPath.section] == Section.error {
                     let cell = tableView.dequeueReusableCell(withIdentifier: ErrorCell.reuseIdentifier, for: indexPath) as! ErrorCell
+                    cell.applyChatStyle(chatStyle)
                     cell.message = self.conversationErrorMessage ?? self.options.errorMessage
                     return cell
                 }
@@ -48,12 +49,13 @@ class MessagesController : UITableViewController, ConversationDelegate {
         tableView.dataSource = dataSource
         // Flip vertically to bottom anchor the scroll view. Cells also apply the same transform
         // so that content is not flipped.
-        self.tableView.transform = FLIP_TRANSFORM
+        tableView.transform = FLIP_TRANSFORM
         tableView.separatorStyle = .none
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 44
         tableView.allowsSelection = false
         tableView.cellLayoutMarginsFollowReadableWidth = true
+        tableView.backgroundColor = options.chatStyle.colors.backgroundColor
 
         if let disclosure = options.disclosure, !disclosure.isEmpty {
             // The disclosure is logically a header, but because of the flipped layout it needs
@@ -273,6 +275,7 @@ private class MessageCell: UITableViewCell {
 
         appliedChatStyle = true
         colors = chatStyle.colors
+        backgroundColor = chatStyle.colors.backgroundColor
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -323,11 +326,14 @@ private class ErrorCell: UITableViewCell {
         super.init(style: .default, reuseIdentifier: reuseIdentifier)
         contentView.transform = FLIP_TRANSFORM
         textLabel?.numberOfLines = 0
-        textLabel?.textColor = .systemRed
     }
 
     required init?(coder aDecoder: NSCoder) {
         fatalError("Unreachable")
+    }
+
+    fileprivate func applyChatStyle(_ chatStyle: ChatStyle) {
+        textLabel?.textColor = chatStyle.colors.errorText
     }
 
     private func render(_ message: String) {
