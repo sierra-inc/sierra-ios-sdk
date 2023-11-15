@@ -3,8 +3,8 @@
 import UIKit
 
 public struct AgentChatControllerOptions {
+    /// Name for this virtual agent, displayed as the navigation item title.
     public let name: String
-    public var logo: UIImage?
 
     /// Message shown from the agent when starting the conversation.
     public var greetingMessage: String = "How can I help you today?"
@@ -53,7 +53,7 @@ public class AgentChatController : UIViewController {
             errorMessage: options.errorMessage,
             chatStyle: options.chatStyle
         ))
-        inputController = InputController(conversation: conversation, placeholder: options.inputPlaceholder)
+        inputController = InputController(conversation: conversation, placeholder: options.inputPlaceholder, chatStyle: options.chatStyle)
         optionsConversationDelegate = options.conversationDelegate
         super.init(nibName: nil, bundle: nil)
 
@@ -61,6 +61,18 @@ public class AgentChatController : UIViewController {
         addChild(inputController)
 
         navigationItem.title = options.name
+
+        // The default transparent appearance does not work well with the inverted scrolling
+        // used by MessagesController. Default to an opaque appearance (that has a bottom
+        // border). By doing this in the initializer, we give the embedding app a chance to
+        // override this behavior if they don't like it.
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = options.chatStyle.colors.backgroundColor
+        navigationItem.standardAppearance = appearance
+        navigationItem.scrollEdgeAppearance = appearance
+        navigationItem.compactAppearance = appearance
+        navigationItem.compactScrollEdgeAppearance = appearance
 
         if let optionsConversationDelegate {
             conversation.addDelegate(optionsConversationDelegate)
@@ -97,15 +109,14 @@ public class AgentChatController : UIViewController {
         let safeAreaGuide = view.safeAreaLayoutGuide
         let keyboardGuide = view.keyboardLayoutGuide
         let readableGuide = view.readableContentGuide
-        let margin: CGFloat = 16
         NSLayoutConstraint.activate([
             messagesView.leadingAnchor.constraint(equalTo: safeAreaGuide.leadingAnchor),
             messagesView.trailingAnchor.constraint(equalTo: safeAreaGuide.trailingAnchor),
             messagesView.topAnchor.constraint(equalTo: safeAreaGuide.topAnchor),
-            messagesView.bottomAnchor.constraint(equalTo: inputView.topAnchor, constant: -margin),
+            messagesView.bottomAnchor.constraint(equalTo: inputView.topAnchor, constant: -12),
             inputView.leadingAnchor.constraint(equalTo: readableGuide.leadingAnchor),
             inputView.trailingAnchor.constraint(equalTo: readableGuide.trailingAnchor),
-            inputView.bottomAnchor.constraint(equalTo: keyboardGuide.topAnchor, constant: -margin),
+            inputView.bottomAnchor.constraint(equalTo: keyboardGuide.topAnchor, constant: -9),
         ])
     }
 }

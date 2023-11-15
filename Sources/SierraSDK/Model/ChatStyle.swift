@@ -36,7 +36,13 @@ public struct ChatStyleColors {
     /// The color that error messages are displayed in
     let errorText: UIColor
 
-    public init(backgroundColor: UIColor, assistantBubble: UIColor, assistantBubbleText: UIColor, userBubble: UIColor, userBubbleText: UIColor, disclosureText: UIColor, errorText: UIColor) {
+    public init(backgroundColor: UIColor = .systemBackground,
+                assistantBubble: UIColor = .systemGray6,
+                assistantBubbleText: UIColor = .label,
+                userBubble: UIColor = .systemBlue,
+                userBubbleText: UIColor = .white,
+                disclosureText: UIColor = .secondaryLabel,
+                errorText: UIColor = .systemRed) {
         self.backgroundColor = backgroundColor
         self.assistantBubble = assistantBubble
         self.assistantBubbleText = assistantBubbleText
@@ -47,17 +53,16 @@ public struct ChatStyleColors {
     }
 }
 
-public let DEFAULT_CHAT_STYLE_COLORS = ChatStyleColors(
-    backgroundColor: .systemBackground,
-    assistantBubble: .systemGray6,
-    assistantBubbleText: .label,
-    userBubble: .systemBlue,
-    userBubbleText: .white,
-    disclosureText: .secondaryLabel,
-    errorText: .systemRed
-)
+public let DEFAULT_CHAT_STYLE_COLORS = ChatStyleColors()
 
 public struct ChatStyleLayout {
+    /// Radius of the bubble. Very large or very small values may not work with buble tails, in which
+    /// case they should be disabled (via the `bubbleTail` property).
+    let bubbleRadius: CGFloat
+
+    /// Whether the bubbles have a "tail" that anchors them to the edges of the chat screen.
+    let bubbleTail: Bool
+
     /// Padding inside the bubble, between the background and the text.
     let bubbleXPadding: CGFloat
     let bubbleYPadding: CGFloat
@@ -72,7 +77,16 @@ public struct ChatStyleLayout {
     /// Maximum absolute width of the bubble (0 to disable)
     let bubbleMaxWidthAbsolute: CGFloat
 
-    public init(bubbleXPadding: CGFloat, bubbleYPadding: CGFloat, bubbleXMargin: CGFloat, bubbleYMargin: CGFloat, bubbleMaxWidthFraction: CGFloat, bubbleMaxWidthAbsolute: CGFloat) {
+    public init(bubbleRadius: CGFloat = 20, 
+                bubbleTail: Bool = true,
+                bubbleXPadding: CGFloat = 14,
+                bubbleYPadding: CGFloat = 9,
+                bubbleXMargin: CGFloat = 0,
+                bubbleYMargin: CGFloat = 6,
+                bubbleMaxWidthFraction: CGFloat = 0.85,
+                bubbleMaxWidthAbsolute: CGFloat = 600) {
+        self.bubbleRadius = bubbleRadius
+        self.bubbleTail = bubbleTail
         self.bubbleXPadding = bubbleXPadding
         self.bubbleYPadding = bubbleYPadding
         self.bubbleXMargin = bubbleXMargin
@@ -82,11 +96,4 @@ public struct ChatStyleLayout {
     }
 }
 
-public let DEFAULT_CHAT_STYLE_LAYOUT = ChatStyleLayout(
-    bubbleXPadding: 12,
-    bubbleYPadding: 11,
-    bubbleXMargin: 0,
-    bubbleYMargin: 8,
-    bubbleMaxWidthFraction: 0.85,
-    bubbleMaxWidthAbsolute: 600
-)
+public let DEFAULT_CHAT_STYLE_LAYOUT = ChatStyleLayout()

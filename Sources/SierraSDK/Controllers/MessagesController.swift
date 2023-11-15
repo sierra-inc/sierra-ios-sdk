@@ -153,7 +153,7 @@ private class DisclosureFooterView: UIView {
 
     init(disclosure: String, style: ChatStyle) {
         labelView = UILabel()
-        xPadding = style.layout.bubbleXMargin + style.layout.bubbleXPadding
+        xPadding = max(style.layout.bubbleXMargin + style.layout.bubbleXPadding, 40)
         super.init(frame: .zero)
 
         self.transform = FLIP_TRANSFORM
@@ -161,6 +161,8 @@ private class DisclosureFooterView: UIView {
         labelView.numberOfLines = 0
         labelView.font = .preferredFont(forTextStyle: .caption1)
         labelView.textColor = style.colors.disclosureText
+        labelView.adjustsFontForContentSizeCategory = false
+        labelView.textAlignment = .center
         addSubview(labelView)
 
         labelView.translatesAutoresizingMaskIntoConstraints = false
@@ -183,7 +185,7 @@ private class DisclosureFooterView: UIView {
 
     override var intrinsicContentSize: CGSize {
         let width = self.frame.width
-        let height = labelView.sizeThatFits(CGSize(width: width - 2*xPadding, height: CGFloat.greatestFiniteMagnitude)).height
+        let height = labelView.sizeThatFits(CGSize(width: width - 2*xPadding, height: CGFloat.greatestFiniteMagnitude)).height + 22
         return CGSize(width: width, height: height)
     }
 }
@@ -212,7 +214,6 @@ private class MessageCell: UITableViewCell {
         textView.textContainer.lineFragmentPadding = 0
         textView.font = UIFont.preferredFont(forTextStyle: .body)
         textView.adjustsFontForContentSizeCategory = true
-        textView.layer.cornerRadius = 16
         textView.layer.masksToBounds = true
         return textView
     }()
@@ -225,11 +226,19 @@ private class MessageCell: UITableViewCell {
         return imageView
     }()
 
+    private let typingingIndicatorView: TypingIndicatorView = {
+        let view = TypingIndicatorView(frame: .zero)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: .default, reuseIdentifier: reuseIdentifier)
         contentView.transform = FLIP_TRANSFORM
         contentView.addSubview(textView)
         contentView.addSubview(tailImageView)
+        contentView.addSubview(typingingIndicatorView)
+        typingingIndicatorView.isHidden = true
     }
 
     fileprivate func applyChatStyle(_ chatStyle: ChatStyle) {
@@ -244,6 +253,8 @@ private class MessageCell: UITableViewCell {
             bottom: layout.bubbleYPadding,
             right: layout.bubbleXPadding
         )
+        textView.layer.cornerRadius = layout.bubbleRadius
+        tailImageView.isHidden = !layout.bubbleTail
 
         if layout.bubbleMaxWidthFraction > 0 {
             textView.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: layout.bubbleMaxWidthFraction).isActive = true
@@ -258,19 +269,25 @@ private class MessageCell: UITableViewCell {
         userConstraints = [
             textView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -layout.bubbleXMargin),
             textView.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: layout.bubbleXMargin),
-            tailImageView.leadingAnchor.constraint(equalTo: textView.trailingAnchor, constant: -17.5),
+            tailImageView.trailingAnchor.constraint(equalTo: textView.trailingAnchor, constant: 5),
         ]
 
         assistantConstraints = [
             textView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: layout.bubbleXMargin),
             textView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -layout.bubbleXMargin),
-            tailImageView.trailingAnchor.constraint(equalTo: textView.leadingAnchor, constant: 17.5),
+            tailImageView.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: -5),
         ]
 
         NSLayoutConstraint.activate([
             textView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: layout.bubbleYMargin),
             textView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -layout.bubbleYMargin),
-            tailImageView.bottomAnchor.constraint(equalTo: textView.bottomAnchor, constant: 4),
+            tailImageView.bottomAnchor.constraint(equalTo: textView.bottomAnchor, constant: 1),
+
+            // Make the typing indicator view track the size of the text view so that it also respects dyanmic text size.
+            typingingIndicatorView.topAnchor.constraint(equalTo: textView.topAnchor, constant: layout.bubbleYPadding),
+            typingingIndicatorView.bottomAnchor.constraint(equalTo: textView.bottomAnchor, constant: -layout.bubbleYPadding),
+            typingingIndicatorView.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: layout.bubbleXPadding),
+            typingingIndicatorView.trailingAnchor.constraint(equalTo: textView.trailingAnchor, constant: -layout.bubbleXPadding),
         ])
 
         appliedChatStyle = true
@@ -300,7 +317,18 @@ private class MessageCell: UITableViewCell {
             NSLayoutConstraint.activate(userConstraints)
         }
 
+        typingingIndicatorView.isHidden = true
         if message.role == .assistant {
+            if message.isTypingIndicator {
+                typingingIndicatorView.isHidden = false
+                if let dotColor = textView.textColor {
+                    typingingIndicatorView.dotColor = dotColor
+                }
+                textView.text = message.content
+                textView.textColor = .clear
+                return
+            }
+
             if let attributedContent = message.attributedContent(font: UIFont.preferredFont(forTextStyle: .body), textColor: textView.textColor) {
                 textView.attributedText = NSMutableAttributedString(attributedContent)
                 return
@@ -334,6 +362,7 @@ private class ErrorCell: UITableViewCell {
 
     fileprivate func applyChatStyle(_ chatStyle: ChatStyle) {
         textLabel?.textColor = chatStyle.colors.errorText
+        backgroundColor = chatStyle.colors.backgroundColor
     }
 
     private func render(_ message: String) {

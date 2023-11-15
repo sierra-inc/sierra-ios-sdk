@@ -76,7 +76,7 @@ public class Conversation {
         let userMessage = Message(role: .user, content: text)
         messages.append(userMessage)
 
-        var assistantMessage = Message(role: .assistant, content: "•••")
+        var assistantMessage = Message.createInitialAssistantMessage()
         var assistantMessageIndex = messages.count
         var assistantMessageID = assistantMessage.id
         messages.append(assistantMessage)
@@ -84,7 +84,16 @@ public class Conversation {
             delegate.conversation(self, didAddMessages: [userMessage.id, assistantMessageID])
         }
 
-        var hasAssistantMessagePlaceholder = true
+        func cleanupTypingIndicator() {
+            if assistantMessageIndex != -1 && messages[assistantMessageIndex].isTypingIndicator {
+                messages.remove(at: assistantMessageIndex)
+                forEachDelegate { [assistantMessageID] delegate in
+                    delegate.conversation(self, didRemoveMessage: assistantMessageID)
+                }
+                assistantMessageIndex = -1
+            }
+        }
+
         do {
             let stream = try await api.sendMessage(text: text, state: state, options: options)
             for try await event in stream {
@@ -109,12 +118,7 @@ public class Conversation {
                                 delegate.conversation(self, didAddMessages: [assistantMessageID])
                             }
                         }
-                        if hasAssistantMessagePlaceholder {
-                            messages[assistantMessageIndex].content = messageText
-                            hasAssistantMessagePlaceholder = false
-                        } else {
-                            messages[assistantMessageIndex].content += messageText
-                        }
+                        messages[assistantMessageIndex].appendContent(piece: messageText)
                         forEachDelegate { [assistantMessageID] delegate in
                             delegate.conversation(self, didChangeMessage: assistantMessageID)
                         }
@@ -123,25 +127,17 @@ public class Conversation {
                         assistantMessageIndex = -1
                     }
                     if let preparingFollowup, preparingFollowup {
-                        assistantMessage = Message(role: .assistant, content: "•••")
+                        assistantMessage = Message.createInitialAssistantMessage()
                         assistantMessageIndex = messages.count
                         assistantMessageID = assistantMessage.id
                         messages.append(assistantMessage)
                         forEachDelegate { [assistantMessageID] delegate in
                             delegate.conversation(self, didAddMessages: [assistantMessageID])
                         }
-                        hasAssistantMessagePlaceholder = true
                     }
                 case "transfer":
                     guard let transfer = event.transfer else { continue }
-                    if hasAssistantMessagePlaceholder {
-                        messages.remove(at: assistantMessageIndex)
-                        forEachDelegate { [assistantMessageID] delegate in
-                            delegate.conversation(self, didRemoveMessage: assistantMessageID)
-                        }
-                        hasAssistantMessagePlaceholder = false
-                        assistantMessageIndex = -1
-                    }
+                    cleanupTypingIndicator()
                     let conversationTransfer = ConversationTransfer(
                         isSynchronous: transfer.isSynchronous ?? false,
                         data: transfer.data ?? [:]
@@ -152,14 +148,7 @@ public class Conversation {
                 case "error":
                     guard let error = event.error else { continue }
                     let errorMessage = error.userVisibleMessage
-                    if hasAssistantMessagePlaceholder {
-                        messages.remove(at: assistantMessageIndex)
-                        forEachDelegate { [assistantMessageID] delegate in
-                            delegate.conversation(self, didRemoveMessage: assistantMessageID)
-                        }
-                        hasAssistantMessagePlaceholder = false
-                        assistantMessageIndex = -1
-                    }
+                    cleanupTypingIndicator()
                     forEachDelegate { delegate in
                         delegate.conversation(self, didHaveError: nil, withMessage: errorMessage)
                     }
@@ -169,12 +158,7 @@ public class Conversation {
             }
         } catch {
             debugLog("Cannot begin conversation, error: \(error)")
-            if hasAssistantMessagePlaceholder {
-                messages.remove(at: assistantMessageIndex)
-                forEachDelegate { delegate in
-                    delegate.conversation(self, didRemoveMessage: assistantMessageID)
-                }
-            }
+            cleanupTypingIndicator()
             forEachDelegate { delegate in
                 delegate.conversation(self, didHaveError: error, withMessage: nil)
             }
@@ -206,6 +190,7 @@ public extension ConversationDelegate {
 public typealias MessageID = UUID
 
 public struct Message: Identifiable {
+
     public let id: MessageID = UUID()
 
     public enum Role: String, Codable {
@@ -215,6 +200,24 @@ public struct Message: Identifiable {
     public let role: Role
 
     public var content: String
+
+    static private let typingIndicatorContent = "•••"
+
+    public var isTypingIndicator: Bool {
+        return content == Message.typingIndicatorContent
+    }
+
+    static func createInitialAssistantMessage() -> Message {
+        return Message(role: .assistant, content: typingIndicatorContent)
+    }
+
+    mutating func appendContent(piece: String) {
+        if isTypingIndicator {
+            content = piece
+        } else {
+            content += piece
+        }
+    }
 
     public func attributedContent(font: UIFont? = nil, textColor: UIColor? = nil) -> AttributedString? {
         guard let contentData = content.data(using: .utf8) else { return nil }
