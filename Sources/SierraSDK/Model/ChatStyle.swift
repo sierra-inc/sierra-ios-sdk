@@ -16,25 +16,34 @@ public let DEFAULT_CHAT_STYLE = ChatStyle(colors: DEFAULT_CHAT_STYLE_COLORS, lay
 
 public struct ChatStyleColors {
     /// The background color for the chat view.
-    let backgroundColor: UIColor
+    public let backgroundColor: UIColor
 
     /// The background color of the chat bubble for messages from the AI assistant.
-    let assistantBubble: UIColor
+    public let assistantBubble: UIColor
 
     /// The color of the text in chat bubbles for messages from the AI assistant.
-    let assistantBubbleText: UIColor
+    public let assistantBubbleText: UIColor
 
     /// The background color of the chat bubble for messages from the user.
-    let userBubble: UIColor
+    public let userBubble: UIColor
 
     /// The color of the text in chat bubbles for messages from the user.
-    let userBubbleText: UIColor
+    public let userBubbleText: UIColor
 
     /// The color of the optional diclosure text that appears before any chat messages.
-    let disclosureText: UIColor
+    public let disclosureText: UIColor
 
     /// The color that error messages are displayed in
-    let errorText: UIColor
+    public let errorText: UIColor
+
+    /// The color of the navigation bar of the chat view
+    public let titleBar: UIColor
+
+    /// The color of the text in the navigation bar of the chat view
+    public let titleBarText: UIColor
+
+    /// Override the tint color of the chat view (it will normally inherit the application's)
+    public let tintColor: UIColor?
 
     public init(backgroundColor: UIColor = .systemBackground,
                 assistantBubble: UIColor = .systemGray6,
@@ -42,7 +51,10 @@ public struct ChatStyleColors {
                 userBubble: UIColor = .systemBlue,
                 userBubbleText: UIColor = .white,
                 disclosureText: UIColor = .secondaryLabel,
-                errorText: UIColor = .systemRed) {
+                errorText: UIColor = .systemRed,
+                titleBar: UIColor = .systemBackground,
+                titleBarText: UIColor = .label,
+                tintColor: UIColor? = nil) {
         self.backgroundColor = backgroundColor
         self.assistantBubble = assistantBubble
         self.assistantBubbleText = assistantBubbleText
@@ -50,6 +62,9 @@ public struct ChatStyleColors {
         self.userBubbleText = userBubbleText
         self.disclosureText = disclosureText
         self.errorText = errorText
+        self.titleBar = titleBar
+        self.titleBarText = titleBarText
+        self.tintColor = tintColor
     }
 }
 

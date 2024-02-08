@@ -68,7 +68,8 @@ public class AgentChatController : UIViewController {
         // override this behavior if they don't like it.
         let appearance = UINavigationBarAppearance()
         appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = options.chatStyle.colors.backgroundColor
+        appearance.backgroundColor = options.chatStyle.colors.titleBar
+        appearance.titleTextAttributes[.foregroundColor] = options.chatStyle.colors.titleBarText
         navigationItem.standardAppearance = appearance
         navigationItem.scrollEdgeAppearance = appearance
         navigationItem.compactAppearance = appearance
@@ -94,6 +95,9 @@ public class AgentChatController : UIViewController {
         view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.backgroundColor = options.chatStyle.colors.backgroundColor
         self.view = view
+        if let tintColor = options.chatStyle.colors.tintColor {
+            view.tintColor = tintColor
+        }
 
         let messagesView = messagesController.view!
         let inputView = inputController.view!
