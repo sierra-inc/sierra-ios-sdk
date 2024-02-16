@@ -48,13 +48,16 @@ class AgentAPI {
     }
 
     func sendMessage(text: String, state: String?, options: ConversationOptions?) async throws -> AsyncThrowingStream<APIEvent, Error> {
-        var variables: [String: String]?
-        var secrets: [String: String]?
-        if let options {
-            variables = options.variables
-            secrets = options.secrets
-        }
-        let request = AgentChatRequest(token: token, message: text, state: state, variables: variables, secrets: secrets)
+        let locale = options?.locale ?? Locale.current
+        let request = AgentChatRequest(
+            token: token,
+            message: text,
+            state: state,
+            variables: options?.variables,
+            secrets: options?.secrets,
+            locale: locale.identifier,
+            customGreeting: options?.customGreeting
+        )
         var urlRequest = URLRequest(url: URL(string: "\(baseURL)/chat")!)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -73,13 +76,15 @@ class AgentAPI {
     }
 }
 
-// Matches the nested arguments type from PublicChatHandler (Go)
+// Matches the publicChatArguments type from public.go
 struct AgentChatRequest: Codable {
     let token: String
     let message: String
     let state: String?
     let variables: [String: String]?
     let secrets: [String: String]?
+    let locale: String
+    let customGreeting: String?
 }
 
 // Matches pubapi.Event and related (Go)

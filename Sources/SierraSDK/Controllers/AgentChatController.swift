@@ -44,10 +44,26 @@ public class AgentChatController : UIViewController {
 
     public init(agent: Agent, options: AgentChatControllerOptions) {
         self.options = options
-        conversation = agent.newConversation(options: options.conversationOptions)
+
+        // The custom greeting was initially a UI-only concept and thus specified via AgentChatControllerOptions,
+        // but it now also affects the API. We copy it over to ConversationOptions so that it can be included in
+        // API requests..
+        var conversationOptions = options.conversationOptions
+        if !options.greetingMessage.isEmpty && conversationOptions?.customGreeting == nil {
+            if conversationOptions == nil {
+                conversationOptions = ConversationOptions()
+            }
+            conversationOptions?.customGreeting = options.greetingMessage
+        }
+
+        conversation = agent.newConversation(options: conversationOptions)
         if !options.greetingMessage.isEmpty {
             conversation.addGreetingMessage(options.greetingMessage)
+        } else if let customGreeting = conversationOptions?.customGreeting {
+            // Conversely, if the custom greeting is only in ConversationOptions, make sure the UI reflects it too.
+            conversation.addGreetingMessage(customGreeting)
         }
+
         messagesController = MessagesController(conversation: conversation, options: MessagesControllerOptions(
             disclosure: options.disclosure,
             errorMessage: options.errorMessage,

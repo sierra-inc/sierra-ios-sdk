@@ -119,6 +119,15 @@ class InputController : UIViewController, UITextViewDelegate, ConversationDelega
         updateSendButton()
     }
 
+    public func conversation(_ conversation: Conversation, didTransfer transfer: ConversationTransfer) {
+        if transfer.isSynchronous {
+            // Sending is no longer possible, make that apparent by having the input look disabled.
+            inputTextView.text = ""
+            inputTextView.isEditable = false
+            inputTextView.resignFirstResponder()
+        }
+    }
+
     // MARK: UITextViewDelegate
 
     func textViewDidBeginEditing(_ textView: UITextView) {
@@ -128,7 +137,7 @@ class InputController : UIViewController, UITextViewDelegate, ConversationDelega
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
-        if textView.text.isEmpty {
+        if textView.text.isEmpty && !conversation.isSynchronouslyTransferred {
             showPlaceholder()
         }
     }

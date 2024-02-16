@@ -4,8 +4,16 @@ import Foundation
 import UIKit
 
 public struct ConversationOptions {
+    /// Initial values for variables (possible variables are agent-specific).
     public var variables: [String: String]?
+    /// Initial values for secrets (possible variables are agent-specific)..
     public var secrets: [String: String]?
+    /// Locale to use for the chat conversation, if the agent is multi-lingual.
+    /// If not specified, the device's locale will be used.
+    public var locale: Locale?
+    /// Custom greeting that the agent has used (before it has interacted with
+    /// the user).
+    public var customGreeting: String?
 
     public init() { }
 }
@@ -20,6 +28,7 @@ public class Conversation {
             }
         }
     }
+    public var isSynchronouslyTransferred: Bool = false
 
     private let api: AgentAPI
     private let options: ConversationOptions?
@@ -145,6 +154,7 @@ public class Conversation {
                     forEachDelegate { delegate in
                         delegate.conversation(self, didTransfer: conversationTransfer)
                     }
+                    isSynchronouslyTransferred = transfer.isSynchronous ?? false
                 case "error":
                     guard let error = event.error else { continue }
                     let errorMessage = error.userVisibleMessage
@@ -163,7 +173,9 @@ public class Conversation {
                 delegate.conversation(self, didHaveError: error, withMessage: nil)
             }
         }
-        canSend = true
+        if !isSynchronouslyTransferred {
+            canSend = true
+        }
     }
 }
 
