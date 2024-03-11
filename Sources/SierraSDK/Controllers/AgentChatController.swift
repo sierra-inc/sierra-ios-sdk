@@ -22,7 +22,7 @@ public struct AgentChatControllerOptions {
     /// Customize the look and feel of the chat
     public var chatStyle: ChatStyle = DEFAULT_CHAT_STYLE
 
-    /// Customization of the Conversation that the controller will create/
+    /// Customization of the Conversation that the controller will create.
     public var conversationOptions: ConversationOptions?
 
     /// Optional delegate that will be told when the conversation that

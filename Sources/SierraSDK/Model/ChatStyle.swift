@@ -30,7 +30,7 @@ public struct ChatStyleColors {
     /// The color of the text in chat bubbles for messages from the user.
     public let userBubbleText: UIColor
 
-    /// The color of the optional diclosure text that appears before any chat messages.
+    /// The color of the optional disclosure text that appears before any chat messages.
     public let disclosureText: UIColor
 
     /// The color that error messages are displayed in
@@ -71,7 +71,7 @@ public struct ChatStyleColors {
 public let DEFAULT_CHAT_STYLE_COLORS = ChatStyleColors()
 
 public struct ChatStyleLayout {
-    /// Radius of the bubble. Very large or very small values may not work with buble tails, in which
+    /// Radius of the bubble. Very large or very small values may not work with bubble tails, in which
     /// case they should be disabled (via the `bubbleTail` property).
     let bubbleRadius: CGFloat
 
@@ -86,13 +86,13 @@ public struct ChatStyleLayout {
     let bubbleXMargin: CGFloat
     let bubbleYMargin: CGFloat
 
-    /// Maxium fraction of the container that the bubble takes up horizontally (0 to disable)
+    /// Maximum fraction of the container that the bubble takes up horizontally (0 to disable)
     let bubbleMaxWidthFraction: CGFloat
 
     /// Maximum absolute width of the bubble (0 to disable)
     let bubbleMaxWidthAbsolute: CGFloat
 
-    public init(bubbleRadius: CGFloat = 20, 
+    public init(bubbleRadius: CGFloat = 20,
                 bubbleTail: Bool = true,
                 bubbleXPadding: CGFloat = 14,
                 bubbleYPadding: CGFloat = 9,
