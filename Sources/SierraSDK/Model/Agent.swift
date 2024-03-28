@@ -56,7 +56,8 @@ class AgentAPI {
             variables: options?.variables,
             secrets: options?.secrets,
             locale: locale.identifier,
-            customGreeting: options?.customGreeting
+            customGreeting: options?.customGreeting,
+            enableContactCenter: options?.enableContactCenter
         )
         var urlRequest = URLRequest(url: URL(string: "\(baseURL)/chat")!)
         urlRequest.httpMethod = "POST"
@@ -85,6 +86,7 @@ struct AgentChatRequest: Codable {
     let secrets: [String: String]?
     let locale: String
     let customGreeting: String?
+    let enableContactCenter: Bool?
 }
 
 // Matches pubapi.Event and related (Go)
@@ -101,6 +103,7 @@ struct APIEvent: Codable {
     struct Transfer: Codable {
         let data: Dictionary<String, String>?
         let isSynchronous: Bool?
+        let isContactCenter: Bool?
     }
     let transfer: Transfer?
     struct Error: Codable {

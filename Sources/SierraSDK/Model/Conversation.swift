@@ -14,6 +14,10 @@ public struct ConversationOptions {
     /// Custom greeting that the agent has used (before it has interacted with
     /// the user).
     public var customGreeting: String?
+    /// Enables contact center integration for this agent. Only has an effect
+    /// for agents where the integration is controlled per-conversation (as
+    /// opposed to being globally enabled or disabled).
+    public var enableContactCenter: Bool?
 
     public init() { }
 }
@@ -149,6 +153,7 @@ public class Conversation {
                     cleanupTypingIndicator()
                     let conversationTransfer = ConversationTransfer(
                         isSynchronous: transfer.isSynchronous ?? false,
+                        isContactCenter: transfer.isContactCenter ?? false,
                         data: transfer.data ?? [:]
                     )
                     forEachDelegate { delegate in
@@ -258,7 +263,14 @@ public struct Message: Identifiable {
 }
 
 public struct ConversationTransfer {
+    /// True if a synchronous transfer was requested, and the user expects the
+    /// conversation to continue immediately.
     public let isSynchronous: Bool
+    /// True if the transfer was handled by a Sierra Contact Center integration,
+    /// and the conversation with the human agent will continue in the same chat.
+    public let isContactCenter: Bool
+    /// Additional (customer-specific) data, to allow a hand-off from the virtual
+    /// agent to the external agent.
     public let data: Dictionary<String, String>
 }
 
