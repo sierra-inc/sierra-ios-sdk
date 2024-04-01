@@ -7,8 +7,9 @@ class MessagesController : UITableViewController, ConversationDelegate {
     private let options: MessagesControllerOptions
     private var conversationError: Error?
     private var conversationErrorMessage: String?
+    private var conversationHumanAgentParticipation: HumanAgentParticipation?
     // Errors are at the bottom, but are listed first due to the bottom-anchored transform
-    private static let sections: [Section] = [.error, .messages]
+    private static let sections: [Section] = [.error, .humanAgentParticipation, .messages]
 
     init(conversation: Conversation, options: MessagesControllerOptions) {
         self.conversation = conversation
@@ -22,20 +23,33 @@ class MessagesController : UITableViewController, ConversationDelegate {
 
     private lazy var dataSource = {
         let conversation = self.conversation
-        let chatStyle = self.options.chatStyle
+        let options = self.options
         return UITableViewDiffableDataSource<Section, MessageID>(
             tableView: tableView,
             cellProvider: { (tableView, indexPath, messageID) -> UITableViewCell? in
-                if MessagesController.sections[indexPath.section] == Section.messages {
+                let section = MessagesController.sections[indexPath.section]
+                if section == Section.messages {
+                    let message = conversation.messageWithID(messageID)
                     let cell = tableView.dequeueReusableCell(withIdentifier: MessageCell.reuseIdentifier, for: indexPath) as! MessageCell
-                    cell.applyChatStyle(chatStyle)
-                    cell.message = conversation.messageWithID(messageID)
+                    cell.applyChatStyle(options.chatStyle)
+                    cell.message = message
+                    var senderName: String? = nil
+                    if let message, message.role == .humanAgent && conversation.shouldShowSenderName(messageID) {
+                        senderName = self.conversationHumanAgentParticipation?.agent?.displayName
+                    }
+                    cell.senderName = senderName
                     return cell
                 }
-                if MessagesController.sections[indexPath.section] == Section.error {
+                if section == Section.error {
                     let cell = tableView.dequeueReusableCell(withIdentifier: ErrorCell.reuseIdentifier, for: indexPath) as! ErrorCell
-                    cell.applyChatStyle(chatStyle)
+                    cell.applyChatStyle(options.chatStyle)
                     cell.message = self.conversationErrorMessage ?? self.options.errorMessage
+                    return cell
+                }
+                if section == Section.humanAgentParticipation {
+                    let cell = tableView.dequeueReusableCell(withIdentifier: HumanAgentWaitingCell.reuseIdentifier, for: indexPath) as! HumanAgentWaitingCell
+                    cell.applyOptions(options)
+                    cell.participation = self.conversationHumanAgentParticipation
                     return cell
                 }
                 return nil
@@ -46,6 +60,7 @@ class MessagesController : UITableViewController, ConversationDelegate {
         super.viewDidLoad()
         tableView.register(MessageCell.self, forCellReuseIdentifier: MessageCell.reuseIdentifier)
         tableView.register(ErrorCell.self, forCellReuseIdentifier: ErrorCell.reuseIdentifier)
+        tableView.register(HumanAgentWaitingCell.self, forCellReuseIdentifier: HumanAgentWaitingCell.reuseIdentifier)
         tableView.dataSource = dataSource
         // Flip vertically to bottom anchor the scroll view. Cells also apply the same transform
         // so that content is not flipped.
@@ -134,16 +149,46 @@ class MessagesController : UITableViewController, ConversationDelegate {
         }
         dataSource.apply(snapshot, animatingDifferences: true)
     }
+
+    func conversation(_ conversation: Conversation, didChangeHumanAgentParticipation participation: HumanAgentParticipation?, previousValue: HumanAgentParticipation?) {
+        self.conversationHumanAgentParticipation = participation
+
+        var snapshot = dataSource.snapshot()
+        if participation?.state == .waiting {
+            if snapshot.numberOfItems(inSection: .humanAgentParticipation) == 0 {
+                snapshot.appendItems([HumanAgentWaitingCell.id], toSection: .humanAgentParticipation)
+            } else {
+                snapshot.reconfigureItems([HumanAgentWaitingCell.id])
+            }
+        } else {
+            if snapshot.numberOfItems(inSection: .humanAgentParticipation) > 0 {
+                snapshot.deleteItems([HumanAgentWaitingCell.id])
+            }
+        }
+        dataSource.apply(snapshot, animatingDifferences: true)
+
+        if participation?.state == .joined && previousValue?.state == .waiting {
+            conversation.addStatusMessage(options.humanAgentTransferJoinedMessage)
+        } else if participation?.state == .left && previousValue?.state == .joined {
+            conversation.addStatusMessage(options.humanAgentTransferLeftMessage)
+        }
+    }
 }
 
 struct MessagesControllerOptions {
     let disclosure: String?
+    let humanAgentTransferWaitingMessage: String
+    let humanAgentTransferQueueSizeMessage: String
+    let humanAgentTransferQueueNextMessage: String
+    let humanAgentTransferJoinedMessage: String
+    let humanAgentTransferLeftMessage: String
     let errorMessage: String
     let chatStyle: ChatStyle
 }
 
 private enum Section: Int {
     case messages
+    case humanAgentParticipation
     case error
 }
 
@@ -201,10 +246,19 @@ private class MessageCell: UITableViewCell {
         }
     }
 
+    var senderName: String? {
+        didSet {
+            updateSenderName()
+        }
+    }
+
     var appliedChatStyle = false
     private var colors: ChatStyleColors?
     private var userConstraints: [NSLayoutConstraint] = []
     private var assistantConstraints: [NSLayoutConstraint] = []
+    private var statusConstraints: [NSLayoutConstraint] = []
+    private var senderNameShownConstraints: [NSLayoutConstraint] = []
+    private var senderNameHiddenConstraints: [NSLayoutConstraint] = []
 
     private let textView: UITextView = {
         let textView = UITextView()
@@ -212,7 +266,6 @@ private class MessageCell: UITableViewCell {
         textView.isScrollEnabled = false
         textView.isEditable = false
         textView.textContainer.lineFragmentPadding = 0
-        textView.font = UIFont.preferredFont(forTextStyle: .body)
         textView.adjustsFontForContentSizeCategory = true
         textView.layer.masksToBounds = true
         return textView
@@ -232,12 +285,21 @@ private class MessageCell: UITableViewCell {
         return view
     }()
 
+    private let senderNameLabel : UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .preferredFont(forTextStyle: .caption1)
+        label.adjustsFontForContentSizeCategory = true
+        return label
+    }()
+
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: .default, reuseIdentifier: reuseIdentifier)
         contentView.transform = FLIP_TRANSFORM
         contentView.addSubview(textView)
         contentView.addSubview(tailImageView)
         contentView.addSubview(typingingIndicatorView)
+        contentView.addSubview(senderNameLabel)
         typingingIndicatorView.isHidden = true
     }
 
@@ -256,11 +318,12 @@ private class MessageCell: UITableViewCell {
         textView.layer.cornerRadius = layout.bubbleRadius
         tailImageView.isHidden = !layout.bubbleTail
 
+        var widthConstraints: [NSLayoutConstraint] = []
         if layout.bubbleMaxWidthFraction > 0 {
-            textView.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: layout.bubbleMaxWidthFraction).isActive = true
+            widthConstraints.append(textView.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: layout.bubbleMaxWidthFraction))
         }
         if layout.bubbleMaxWidthAbsolute > 0 {
-            textView.widthAnchor.constraint(lessThanOrEqualToConstant: layout.bubbleMaxWidthAbsolute).isActive = true
+            widthConstraints.append(textView.widthAnchor.constraint(lessThanOrEqualToConstant: layout.bubbleMaxWidthAbsolute))
         }
 
         let leadingAnchor = readableContentGuide.leadingAnchor
@@ -270,16 +333,31 @@ private class MessageCell: UITableViewCell {
             textView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -layout.bubbleXMargin),
             textView.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: layout.bubbleXMargin),
             tailImageView.trailingAnchor.constraint(equalTo: textView.trailingAnchor, constant: 5),
-        ]
+            senderNameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -layout.bubbleXMargin - layout.bubbleXPadding),
+        ] + widthConstraints
 
         assistantConstraints = [
             textView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: layout.bubbleXMargin),
             textView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -layout.bubbleXMargin),
             tailImageView.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: -5),
+            senderNameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: layout.bubbleXMargin + layout.bubbleXPadding),
+        ] + widthConstraints
+
+        statusConstraints = [
+            textView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: layout.bubbleXMargin),
+            textView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -layout.bubbleXMargin),
+        ]
+
+        senderNameShownConstraints = [
+            textView.topAnchor.constraint(equalTo: senderNameLabel.bottomAnchor, constant: layout.bubbleYMargin),
+            senderNameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 5),
+        ]
+
+        senderNameHiddenConstraints = [
+            textView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: layout.bubbleYMargin),
         ]
 
         NSLayoutConstraint.activate([
-            textView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: layout.bubbleYMargin),
             textView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -layout.bubbleYMargin),
             tailImageView.bottomAnchor.constraint(equalTo: textView.bottomAnchor, constant: 1),
 
@@ -293,6 +371,8 @@ private class MessageCell: UITableViewCell {
         appliedChatStyle = true
         colors = chatStyle.colors
         backgroundColor = chatStyle.colors.backgroundColor
+
+        senderNameLabel.textColor = colors?.statusText
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -301,24 +381,41 @@ private class MessageCell: UITableViewCell {
 
     private func render(_ message: Message) {
         switch message.role {
-        case .assistant:
+        case .assistant, .humanAgent:
             textView.backgroundColor = colors?.assistantBubble
             textView.textColor = colors?.assistantBubbleText
+            textView.font = UIFont.preferredFont(forTextStyle: .body)
+            textView.textAlignment = .natural
+            tailImageView.layer.opacity = 1.0
             tailImageView.tintColor = colors?.assistantBubble
             tailImageView.transform = CGAffineTransform.identity
             NSLayoutConstraint.deactivate(userConstraints)
             NSLayoutConstraint.activate(assistantConstraints)
+            NSLayoutConstraint.deactivate(statusConstraints)
         case .user:
             textView.backgroundColor = colors?.userBubble
             textView.textColor = colors?.userBubbleText
+            textView.font = UIFont.preferredFont(forTextStyle: .body)
+            textView.textAlignment = .natural
+            tailImageView.layer.opacity = 1.0
             tailImageView.tintColor = colors?.userBubble
             tailImageView.transform = CGAffineTransform(scaleX: -1, y: 1)
             NSLayoutConstraint.deactivate(assistantConstraints)
             NSLayoutConstraint.activate(userConstraints)
+            NSLayoutConstraint.deactivate(statusConstraints)
+        case .status:
+            textView.backgroundColor = colors?.backgroundColor
+            textView.textColor = colors?.statusText
+            textView.font = .preferredFont(forTextStyle: .caption1)
+            textView.textAlignment = .center
+            tailImageView.layer.opacity = 0
+            NSLayoutConstraint.deactivate(userConstraints)
+            NSLayoutConstraint.deactivate(assistantConstraints)
+            NSLayoutConstraint.activate(statusConstraints)
         }
 
         typingingIndicatorView.isHidden = true
-        if message.role == .assistant {
+        if message.role == .assistant || message.role == .humanAgent {
             if message.isTypingIndicator {
                 typingingIndicatorView.isHidden = false
                 if let dotColor = textView.textColor {
@@ -335,6 +432,19 @@ private class MessageCell: UITableViewCell {
             }
         }
         textView.text = message.content
+    }
+
+    private func updateSenderName() {
+        if let senderName {
+            senderNameLabel.text = senderName
+            senderNameLabel.isHidden = false
+            NSLayoutConstraint.deactivate(senderNameHiddenConstraints)
+            NSLayoutConstraint.activate(senderNameShownConstraints)
+        } else {
+            senderNameLabel.isHidden = true
+            NSLayoutConstraint.activate(senderNameHiddenConstraints)
+            NSLayoutConstraint.deactivate(senderNameShownConstraints)
+        }
     }
 }
 
@@ -369,5 +479,61 @@ private class ErrorCell: UITableViewCell {
         textLabel?.text = message
     }
 }
+
+private class HumanAgentWaitingCell: UITableViewCell {
+    fileprivate static let id: MessageID = UUID()
+    fileprivate static let reuseIdentifier = String(describing: ErrorCell.self)
+
+    var participation: HumanAgentParticipation? {
+        didSet {
+            if let participation {
+                render(participation)
+            }
+        }
+    }
+
+    private var options: MessagesControllerOptions?
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: .default, reuseIdentifier: reuseIdentifier)
+        contentView.transform = FLIP_TRANSFORM
+        textLabel?.numberOfLines = 0
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("Unreachable")
+    }
+
+    fileprivate func applyOptions(_ options: MessagesControllerOptions) {
+        let colors = options.chatStyle.colors
+        textLabel?.textColor = colors.statusText
+        textLabel?.textAlignment = .center
+        textLabel?.font = .preferredFont(forTextStyle: .caption1)
+        backgroundColor = colors.backgroundColor
+        self.options = options
+    }
+
+    private func render(_ participation: HumanAgentParticipation) {
+        guard let options else { return }
+        guard let textLabel else { return }
+
+        if let queueSize = participation.queueSize {
+            if queueSize == 0 {
+                textLabel.text = options.humanAgentTransferQueueNextMessage
+            } else {
+                let ordinalFormatter = NumberFormatter()
+                ordinalFormatter.numberStyle = .ordinal
+                if let position = ordinalFormatter.string(from: NSNumber(value: queueSize)) {
+                    textLabel.text = options.humanAgentTransferQueueSizeMessage.replacingOccurrences(of: "{POSITION}", with: position)
+                } else {
+                    textLabel.text = options.humanAgentTransferWaitingMessage
+                }
+            }
+        } else {
+            textLabel.text = options.humanAgentTransferWaitingMessage
+        }
+    }
+}
+
 
 fileprivate let FLIP_TRANSFORM = CGAffineTransform(scaleX: 1, y: -1)

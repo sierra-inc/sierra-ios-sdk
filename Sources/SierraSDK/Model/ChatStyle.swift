@@ -36,6 +36,9 @@ public struct ChatStyleColors {
     /// The color that error messages are displayed in
     public let errorText: UIColor
 
+    /// The color that the waiting message is displayed in
+    public let statusText: UIColor
+
     /// The color of the navigation bar of the chat view
     public let titleBar: UIColor
 
@@ -52,6 +55,7 @@ public struct ChatStyleColors {
                 userBubbleText: UIColor = .white,
                 disclosureText: UIColor = .secondaryLabel,
                 errorText: UIColor = .systemRed,
+                humanAgentTransferWaitingText: UIColor = .secondaryLabel,
                 titleBar: UIColor = .systemBackground,
                 titleBarText: UIColor = .label,
                 tintColor: UIColor? = nil) {
@@ -62,6 +66,7 @@ public struct ChatStyleColors {
         self.userBubbleText = userBubbleText
         self.disclosureText = disclosureText
         self.errorText = errorText
+        self.statusText = humanAgentTransferWaitingText
         self.titleBar = titleBar
         self.titleBarText = titleBarText
         self.tintColor = tintColor

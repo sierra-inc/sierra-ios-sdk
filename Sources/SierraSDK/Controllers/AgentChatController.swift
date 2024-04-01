@@ -16,6 +16,24 @@ public struct AgentChatControllerOptions {
     /// server provided an alternate message to display.
     public var errorMessage: String = "Oops, an error was encountered! Please try again."
 
+    /// Message shown when waiting for a human agent to join the conversation.
+    public var humanAgentTransferWaitingMessage: String = "Waiting for agent…"
+
+    /// Message shown when waiting for a human agent to join the conversation,
+    /// and the queue size is known. "{POSITION}" will be replaced with a localized
+    /// ordinal showing the position.
+    public var humanAgentTransferQueueSizeMessage: String = "Waiting for agent (you are {POSITION} in line)…"
+
+    /// Message shown when waiting for a human agent to join the conversation,
+    /// and the user is next in line.
+    public var humanAgentTransferQueueNextMessage: String = "Waiting for agent (you are next)…"
+
+    /// Message shown when a human agent has joined the conversation.
+    public var humanAgentTransferJoinedMessage: String = "Agent connected"
+
+    /// Message shown when a human agent has left the conversation.
+    public var humanAgentTransferLeftMessage: String = "Agent disconnected"
+
     /// Placeholder value displayed in the chat input when it is empty.
     public var inputPlaceholder: String = "Message…"
 
@@ -66,6 +84,11 @@ public class AgentChatController : UIViewController {
 
         messagesController = MessagesController(conversation: conversation, options: MessagesControllerOptions(
             disclosure: options.disclosure,
+            humanAgentTransferWaitingMessage: options.humanAgentTransferWaitingMessage,
+            humanAgentTransferQueueSizeMessage: options.humanAgentTransferQueueSizeMessage,
+            humanAgentTransferQueueNextMessage: options.humanAgentTransferQueueNextMessage,
+            humanAgentTransferJoinedMessage: options.humanAgentTransferJoinedMessage,
+            humanAgentTransferLeftMessage: options.humanAgentTransferLeftMessage,
             errorMessage: options.errorMessage,
             chatStyle: options.chatStyle
         ))
@@ -90,20 +113,10 @@ public class AgentChatController : UIViewController {
         navigationItem.scrollEdgeAppearance = appearance
         navigationItem.compactAppearance = appearance
         navigationItem.compactScrollEdgeAppearance = appearance
-
-        if let optionsConversationDelegate {
-            conversation.addDelegate(optionsConversationDelegate)
-        }
     }
 
     required public init?(coder aDecoder: NSCoder) {
         fatalError("Unreachable")
-    }
-
-    deinit {
-        if let optionsConversationDelegate {
-            conversation.removeDelegate(optionsConversationDelegate)
-        }
     }
 
     public override func loadView() {
@@ -138,5 +151,19 @@ public class AgentChatController : UIViewController {
             inputView.trailingAnchor.constraint(equalTo: readableGuide.trailingAnchor),
             inputView.bottomAnchor.constraint(equalTo: keyboardGuide.topAnchor, constant: -9),
         ])
+    }
+
+    public override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if let optionsConversationDelegate {
+            conversation.addDelegate(optionsConversationDelegate)
+        }
+    }
+
+    public override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        if let optionsConversationDelegate {
+            conversation.removeDelegate(optionsConversationDelegate)
+        }
     }
 }

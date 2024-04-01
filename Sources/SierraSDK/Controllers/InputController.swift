@@ -113,6 +113,13 @@ class InputController : UIViewController, UITextViewDelegate, ConversationDelega
         }
     }
 
+    // Sending is no longer possible, make that apparent by having the input look disabled.
+    private func disableSend() {
+        inputTextView.text = ""
+        inputTextView.isEditable = false
+        inputTextView.resignFirstResponder()
+    }
+
     // MARK: ConversationDelegate
 
     func conversation(_ conversation: Conversation, didChangeCanSend canSend: Bool) {
@@ -120,11 +127,14 @@ class InputController : UIViewController, UITextViewDelegate, ConversationDelega
     }
 
     public func conversation(_ conversation: Conversation, didTransfer transfer: ConversationTransfer) {
-        if transfer.isSynchronous {
-            // Sending is no longer possible, make that apparent by having the input look disabled.
-            inputTextView.text = ""
-            inputTextView.isEditable = false
-            inputTextView.resignFirstResponder()
+        if transfer.isSynchronous && !transfer.isContactCenter {
+            disableSend()
+        }
+    }
+
+    public func conversation(_ conversation: Conversation, didChangeHumanAgentParticipation participation: HumanAgentParticipation?, previousValue: HumanAgentParticipation?) {
+        if participation?.state == .left {
+            disableSend()
         }
     }
 

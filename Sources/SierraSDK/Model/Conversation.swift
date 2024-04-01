@@ -38,6 +38,24 @@ public class Conversation {
     private let options: ConversationOptions?
     private var state: String?
     private var delegates = NSHashTable<AnyObject>.weakObjects()
+    private var humanAgentParticipation: HumanAgentParticipation? {
+        didSet {
+            forEachDelegate { delegate in
+                delegate.conversation(self, didChangeHumanAgentParticipation: self.humanAgentParticipation, previousValue: oldValue)
+            }
+            guard let humanAgentParticipation else {
+                stopPolling()
+                return
+            }
+            if humanAgentParticipation.state == .waiting || humanAgentParticipation.state == .joined {
+                startPolling()
+            } else {
+                stopPolling()
+            }
+        }
+    }
+    private var pollingTask: Task<Void, Error>?
+    private var pollingCursor: String?
 
     init(api: AgentAPI, options: ConversationOptions?) {
         self.api = api
@@ -46,6 +64,14 @@ public class Conversation {
 
     public func addGreetingMessage(_ text: String) {
         let message = Message(role: .assistant, content: text)
+        messages.append(message)
+        forEachDelegate { delegate in
+            delegate.conversation(self, didAddMessages: [message.id])
+        }
+    }
+
+    public func addStatusMessage(_ text: String) {
+        let message = Message(role: .status, content: text)
         messages.append(message)
         forEachDelegate { delegate in
             delegate.conversation(self, didAddMessages: [message.id])
@@ -61,12 +87,27 @@ public class Conversation {
         return nil
     }
 
+    func shouldShowSenderName(_ id: MessageID) -> Bool {
+        for (i, message) in messages.enumerated() {
+            if message.id == id {
+                return i > 0 && message.role != messages[i - 1].role
+            }
+        }
+        return false
+    }
+
     func addDelegate(_ delegate: ConversationDelegate) {
         delegates.add(delegate)
+        if delegates.count == 1 && (humanAgentParticipation?.state == .waiting || humanAgentParticipation?.state == .joined) {
+            startPolling()
+        }
     }
 
     func removeDelegate(_ delegate: ConversationDelegate) {
         delegates.remove(delegate)
+        if delegates.count == 0 {
+            stopPolling()
+        }
     }
 
     private func forEachDelegate(_ closure: @escaping (ConversationDelegate) -> Void) {
@@ -89,16 +130,28 @@ public class Conversation {
         let userMessage = Message(role: .user, content: text)
         messages.append(userMessage)
 
-        var assistantMessage = Message.createInitialAssistantMessage()
-        var assistantMessageIndex = messages.count
-        var assistantMessageID = assistantMessage.id
-        messages.append(assistantMessage)
+        var polling = false
+        var assistantMessageIndex = -1
+        var newMessageIDs = [userMessage.id]
+        if pollingTask != nil && self.humanAgentParticipation != nil {
+            // We're polling while interacting with a human agent, in which case
+            // we'll get back responses via the polling loop, and we can't assume
+            // that the agent will start typing immediately.
+            polling = true
+        } else {
+            var assistantMessage = Message.createInitialAssistantMessage()
+            assistantMessageIndex = messages.count
+            messages.append(assistantMessage)
+            newMessageIDs.append(assistantMessage.id)
+        }
+
         forEachDelegate { delegate in
-            delegate.conversation(self, didAddMessages: [userMessage.id, assistantMessageID])
+            delegate.conversation(self, didAddMessages: newMessageIDs)
         }
 
         func cleanupTypingIndicator() {
             if assistantMessageIndex != -1 && messages[assistantMessageIndex].isTypingIndicator {
+                let assistantMessageID = messages[assistantMessageIndex].id
                 messages.remove(at: assistantMessageIndex)
                 forEachDelegate { [assistantMessageID] delegate in
                     delegate.conversation(self, didRemoveMessage: assistantMessageID)
@@ -108,7 +161,7 @@ public class Conversation {
         }
 
         do {
-            let stream = try await api.sendMessage(text: text, state: state, options: options)
+            let stream = try await api.sendMessage(text: text, state: state, options: options, polling: polling)
             for try await event in stream {
                 switch event.type {
                 case "state":
@@ -123,16 +176,16 @@ public class Conversation {
                     let preparingFollowup = message.preparingFollowup
                     if let messageText {
                         if assistantMessageIndex == -1 {
-                            assistantMessage = Message(role: .assistant, content: "")
+                            let assistantMessage = Message(role: .assistant, content: "")
                             assistantMessageIndex = messages.count
-                            assistantMessageID = assistantMessage.id
                             messages.append(assistantMessage)
-                            forEachDelegate { [assistantMessageID] delegate in
-                                delegate.conversation(self, didAddMessages: [assistantMessageID])
+                            forEachDelegate { delegate in
+                                delegate.conversation(self, didAddMessages: [assistantMessage.id])
                             }
                         }
                         messages[assistantMessageIndex].appendContent(piece: messageText)
-                        forEachDelegate { [assistantMessageID] delegate in
+                        let assistantMessageID = messages[assistantMessageIndex].id
+                        forEachDelegate { delegate in
                             delegate.conversation(self, didChangeMessage: assistantMessageID)
                         }
                     }
@@ -140,12 +193,11 @@ public class Conversation {
                         assistantMessageIndex = -1
                     }
                     if let preparingFollowup, preparingFollowup {
-                        assistantMessage = Message.createInitialAssistantMessage()
+                        let assistantMessage = Message.createInitialAssistantMessage()
                         assistantMessageIndex = messages.count
-                        assistantMessageID = assistantMessage.id
                         messages.append(assistantMessage)
-                        forEachDelegate { [assistantMessageID] delegate in
-                            delegate.conversation(self, didAddMessages: [assistantMessageID])
+                        forEachDelegate { delegate in
+                            delegate.conversation(self, didAddMessages: [assistantMessage.id])
                         }
                     }
                 case "transfer":
@@ -160,6 +212,9 @@ public class Conversation {
                         delegate.conversation(self, didTransfer: conversationTransfer)
                     }
                     isSynchronouslyTransferred = transfer.isSynchronous ?? false
+                    if transfer.isContactCenter ?? false {
+                        humanAgentParticipation = HumanAgentParticipation()
+                    }
                 case "error":
                     guard let error = event.error else { continue }
                     let errorMessage = error.userVisibleMessage
@@ -172,7 +227,7 @@ public class Conversation {
                 }
             }
         } catch {
-            debugLog("Cannot begin conversation, error: \(error)")
+            debugLog("Cannot send message, error: \(error)")
             cleanupTypingIndicator()
             forEachDelegate { delegate in
                 delegate.conversation(self, didHaveError: error, withMessage: nil)
@@ -181,6 +236,130 @@ public class Conversation {
         if !isSynchronouslyTransferred {
             canSend = true
         }
+    }
+
+    private func startPolling() {
+        if pollingTask != nil {
+            return
+        }
+
+        pollingTask = Task {
+            // api.poll is a regenerating hanging GET that may regenerate too
+            // frequently when the server is failing fast; we should backoff on errors
+            var backoffDelay: TimeInterval = 1
+            var consecutiveErrors = 0
+            var cancelled = false
+
+            // We may have a typing indicator from a previous polling run that was interrupted
+            var typingIndicatorMessageIndex = messages.lastIndex(where: { $0.isTypingIndicator && $0.role == .humanAgent }) ?? -1
+
+            func cleanupTypingIndicator() {
+                if typingIndicatorMessageIndex != -1 {
+                    if messages[typingIndicatorMessageIndex].isTypingIndicator {
+                        let messageID = messages[typingIndicatorMessageIndex].id
+                        messages.remove(at: typingIndicatorMessageIndex)
+                        forEachDelegate { [messageID] delegate in
+                            delegate.conversation(self, didRemoveMessage: messageID)
+                        }
+                    }
+                    typingIndicatorMessageIndex = -1
+                }
+            }
+
+            while !cancelled {
+                do {
+                    let stream = try await api.poll(state: state, cursor: pollingCursor, options: options)
+                    // Consume the stream
+                    for try await event in stream {
+                        try Task.checkCancellation()
+                        switch event.type {
+                        case "livePollCursor":
+                            guard let newCursor = event.livePollCursor else { continue }
+                            pollingCursor = newCursor
+                        case "message":
+                            backoffDelay = 1
+                            consecutiveErrors = 0
+                            guard let message = event.message else { continue }
+                            if message.role != "human_agent" {
+                                continue
+                            }
+
+                            // More messages (possibly from the user) appeared after we added the typing indicator. Remove it
+                            // so that we can append the new agent message at the bottom.
+                            if typingIndicatorMessageIndex != -1 && typingIndicatorMessageIndex != messages.count - 1 {
+                                cleanupTypingIndicator()
+                            }
+
+                            if typingIndicatorMessageIndex == -1 {
+                                let agentMessage = Message(role: .humanAgent, content: message.text ?? "")
+                                messages.append(agentMessage)
+                                let agentMessageID = agentMessage.id
+                                forEachDelegate { [agentMessageID] delegate in
+                                    delegate.conversation(self, didAddMessages: [agentMessageID])
+                                }
+                            } else {
+                                messages[typingIndicatorMessageIndex].appendContent(piece: message.text ?? "")
+                                let agentMessageID = messages[typingIndicatorMessageIndex].id
+                                typingIndicatorMessageIndex = -1
+                                forEachDelegate { [agentMessageID] delegate in
+                                    delegate.conversation(self, didChangeMessage: agentMessageID)
+                                }
+                            }
+                        case "humanAgentInfo":
+                            guard let info = event.humanAgentInfo else { continue }
+                            var humanAgentParticipation = self.humanAgentParticipation ?? HumanAgentParticipation()
+                            if let displayName = info.displayName {
+                                humanAgentParticipation.agent = HumanAgent(displayName: displayName)
+                            }
+                            if let queueSize = info.queueSize {
+                                humanAgentParticipation.queueSize = queueSize
+                            }
+                            if info.joined == true {
+                                humanAgentParticipation.state = .joined
+                                canSend = true
+                            }
+                            if info.left == true {
+                                humanAgentParticipation.state = .left
+                                canSend = false
+                                cleanupTypingIndicator()
+                            }
+                            if info.typing == true && typingIndicatorMessageIndex == -1 {
+                                var message = Message.createInitialHumanAgentMessage()
+                                typingIndicatorMessageIndex = messages.count
+                                messages.append(message)
+                                forEachDelegate { delegate in
+                                    delegate.conversation(self, didAddMessages: [message.id])
+                                }
+                            }
+                            self.humanAgentParticipation = humanAgentParticipation
+                        case "error":
+                            guard let error = event.error else { continue }
+                            let errorMessage = error.userVisibleMessage
+                            forEachDelegate { delegate in
+                                delegate.conversation(self, didHaveError: nil, withMessage: errorMessage)
+                            }
+                        default:
+                            debugLog("Unknown event type: \(event.type)")
+                        }
+                    }
+                } catch {
+                    if let _ = error as? CancellationError {
+                        cancelled = true
+                    } else {
+                        backoffDelay *= min(pow(1.5, Double(consecutiveErrors)), 60.0)
+                        consecutiveErrors += 1
+                        debugLog("Polling error: \(error), will retry in \(backoffDelay)s")
+                        try await Task.sleep(nanoseconds: UInt64(backoffDelay * 1_000_000_000))
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopPolling() {
+        guard let pollingTask else { return }
+        pollingTask.cancel()
+        self.pollingTask = nil
     }
 }
 
@@ -191,6 +370,7 @@ public protocol ConversationDelegate : AnyObject {
     func conversation(_ conversation: Conversation, didHaveError error: Error?, withMessage message: String?)
     func conversation(_ conversation: Conversation, didTransfer transfer: ConversationTransfer)
     func conversation(_ conversation: Conversation, didChangeCanSend canSend: Bool)
+    func conversation(_ conversation: Conversation, didChangeHumanAgentParticipation participation: HumanAgentParticipation?, previousValue: HumanAgentParticipation?)
 }
 
 // Default no-op implementations of ConversationDelegate, so that clients can
@@ -202,6 +382,7 @@ public extension ConversationDelegate {
     func conversation(_ conversation: Conversation, didHaveError error: Error?, withMessage message: String?) {}
     func conversation(_ conversation: Conversation, didTransfer transfer: ConversationTransfer) {}
     func conversation(_ conversation: Conversation, didChangeCanSend canSend: Bool) {}
+    func conversation(_ conversation: Conversation, didChangeHumanAgentParticipation participation: HumanAgentParticipation?, previousValue: HumanAgentParticipation?) {}
 }
 
 public typealias MessageID = UUID
@@ -213,6 +394,8 @@ public struct Message: Identifiable {
     public enum Role: String, Codable {
         case assistant = "assistant"
         case user = "user"
+        case humanAgent = "human_agent"
+        case status = "status"
     }
     public let role: Role
 
@@ -226,6 +409,10 @@ public struct Message: Identifiable {
 
     static func createInitialAssistantMessage() -> Message {
         return Message(role: .assistant, content: typingIndicatorContent)
+    }
+
+    static func createInitialHumanAgentMessage() -> Message {
+        return Message(role: .humanAgent, content: typingIndicatorContent)
     }
 
     mutating func appendContent(piece: String) {
@@ -272,6 +459,22 @@ public struct ConversationTransfer {
     /// Additional (customer-specific) data, to allow a hand-off from the virtual
     /// agent to the external agent.
     public let data: Dictionary<String, String>
+}
+
+public struct HumanAgentParticipation {
+    var state: HumanAgentParticipationState = .waiting
+    var queueSize: Int? = nil
+    var agent: HumanAgent? = nil
+}
+
+public enum HumanAgentParticipationState {
+    case waiting
+    case joined
+    case left
+}
+
+public struct HumanAgent {
+    let displayName: String
 }
 
 func debugLog(_ message: String) {

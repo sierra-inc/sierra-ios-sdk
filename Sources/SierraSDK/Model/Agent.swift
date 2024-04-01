@@ -29,7 +29,8 @@ class AgentAPI {
 
     private let token: String
     private let baseURL: String
-    private let urlSession = {
+
+    private static func urlSessionConfig() -> URLSessionConfiguration {
         let config = URLSessionConfiguration.default
         let hostAppIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
         let hostAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
@@ -39,15 +40,17 @@ class AgentAPI {
             "User-Agent": "Sierra-iOS-SDK (\(hostAppIdentifier)/\(hostAppVersion) \(iosModel)/\(iosVersion))",
             "Sierra-API-Compatibility-Date": API_COMPATIBILITY_DATE,
         ]
-        return URLSession(configuration: config)
-    }()
+        return config
+    }
+    private let sendURLSession = URLSession(configuration: urlSessionConfig())
+    private let pollURLSession = URLSession(configuration: urlSessionConfig())
 
     init(config: AgentConfig) {
         self.token = config.token
         self.baseURL = config.apiBaseURL ?? "https://api.sierra.chat"
     }
 
-    func sendMessage(text: String, state: String?, options: ConversationOptions?) async throws -> AsyncThrowingStream<APIEvent, Error> {
+    func sendMessage(text: String, state: String?, options: ConversationOptions?, polling: Bool = false) async throws -> AsyncThrowingStream<APIEvent, Error> {
         let locale = options?.locale ?? Locale.current
         let request = AgentChatRequest(
             token: token,
@@ -57,7 +60,8 @@ class AgentAPI {
             secrets: options?.secrets,
             locale: locale.identifier,
             customGreeting: options?.customGreeting,
-            enableContactCenter: options?.enableContactCenter
+            enableContactCenter: options?.enableContactCenter,
+            polling: polling
         )
         var urlRequest = URLRequest(url: URL(string: "\(baseURL)/chat")!)
         urlRequest.httpMethod = "POST"
@@ -65,13 +69,45 @@ class AgentAPI {
         urlRequest.httpBody = try JSONEncoder().encode(request)
 
         return AsyncThrowingStream { continuation in
-            let listener = AgentChatUpdateListener(urlSession: urlSession, urlRequest: urlRequest) { update in
+            let listener = AgentChatUpdateListener(urlSession: sendURLSession, urlRequest: urlRequest) { update in
                 continuation.yield(update)
             } onComplete: { error in
                 continuation.finish(throwing: error)
             }
             continuation.onTermination = { @Sendable _ in
                 listener.cancel()
+            }
+        }
+    }
+
+    func poll(state: String?, cursor: String?, options: ConversationOptions?) async throws -> AsyncThrowingStream<APIEvent, Error> {
+        let locale = options?.locale ?? Locale.current
+        let request = AgentPollRequest(
+            token: token,
+            state: state,
+            variables: options?.variables,
+            secrets: options?.secrets,
+            cursor: cursor
+        )
+        var urlRequest = URLRequest(url: URL(string: "\(baseURL)/chat/live/poll")!)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try JSONEncoder().encode(request)
+
+        return AsyncThrowingStream { continuation in
+            let listener = AgentChatUpdateListener(urlSession: pollURLSession, urlRequest: urlRequest) { update in
+                continuation.yield(update)
+            } onComplete: { error in
+                continuation.finish(throwing: error)
+            }
+            continuation.onTermination = { @Sendable termination in
+                listener.cancel()
+                switch termination {
+                case .cancelled:
+                    continuation.finish(throwing: CancellationError())
+                case .finished(let error):
+                    continuation.finish(throwing: error)
+                }
             }
         }
     }
@@ -87,12 +123,24 @@ struct AgentChatRequest: Codable {
     let locale: String
     let customGreeting: String?
     let enableContactCenter: Bool?
+    let polling: Bool?
+}
+
+// Matches the livePollArguments type from live.go
+struct AgentPollRequest: Codable {
+    let token: String
+    let state: String?
+    let variables: [String: String]?
+    let secrets: [String: String]?
+    let cursor: String?
 }
 
 // Matches pubapi.Event and related (Go)
 struct APIEvent: Codable {
     let type: String
+
     let state: String?
+
     struct Message: Codable {
         let role: String?
         let text: String?
@@ -100,12 +148,25 @@ struct APIEvent: Codable {
         let preparingFollowup: Bool?
     }
     let message: Message?
+
     struct Transfer: Codable {
         let data: Dictionary<String, String>?
         let isSynchronous: Bool?
         let isContactCenter: Bool?
     }
     let transfer: Transfer?
+
+    let livePollCursor: String?
+
+    struct HumanAgentInfo: Codable {
+        let queueSize: Int?
+        let displayName: String?
+        let joined: Bool?
+        let left: Bool?
+        let typing: Bool?
+    }
+    let humanAgentInfo: HumanAgentInfo?
+
     struct Error: Codable {
         let userVisibleMessage: String?
     }
@@ -162,7 +223,7 @@ class AgentChatUpdateListener: NSObject, URLSessionDataDelegate {
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
         guard let httpResponse = response as? HTTPURLResponse else { return }
-        if httpResponse.statusCode != 200 {
+        if httpResponse.statusCode >= 400 {
             onComplete(AgentChatError.httpError(httpResponse.statusCode))
             completionHandler(.cancel)
             return
