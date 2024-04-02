@@ -47,11 +47,8 @@ public class Conversation {
                 stopPolling()
                 return
             }
-            if humanAgentParticipation.state == .waiting || humanAgentParticipation.state == .joined {
-                startPolling()
-            } else {
-                stopPolling()
-            }
+            // Even if the agent has left, another may join, so we can't stop polling.
+            startPolling()
         }
     }
     private var pollingTask: Task<Void, Error>?

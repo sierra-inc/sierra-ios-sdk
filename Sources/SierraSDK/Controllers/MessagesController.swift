@@ -167,7 +167,7 @@ class MessagesController : UITableViewController, ConversationDelegate {
         }
         dataSource.apply(snapshot, animatingDifferences: true)
 
-        if participation?.state == .joined && previousValue?.state == .waiting {
+        if participation?.state == .joined && (previousValue?.state == .waiting || previousValue?.state == .left) {
             conversation.addStatusMessage(options.humanAgentTransferJoinedMessage)
         } else if participation?.state == .left && previousValue?.state == .joined {
             conversation.addStatusMessage(options.humanAgentTransferLeftMessage)

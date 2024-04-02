@@ -120,6 +120,10 @@ class InputController : UIViewController, UITextViewDelegate, ConversationDelega
         inputTextView.resignFirstResponder()
     }
 
+    private func enableSend() {
+        inputTextView.isEditable = true
+    }
+
     // MARK: ConversationDelegate
 
     func conversation(_ conversation: Conversation, didChangeCanSend canSend: Bool) {
@@ -135,6 +139,8 @@ class InputController : UIViewController, UITextViewDelegate, ConversationDelega
     public func conversation(_ conversation: Conversation, didChangeHumanAgentParticipation participation: HumanAgentParticipation?, previousValue: HumanAgentParticipation?) {
         if participation?.state == .left {
             disableSend()
+        } else if participation?.state == .joined {
+            enableSend()
         }
     }
 
