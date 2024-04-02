@@ -482,7 +482,7 @@ private class ErrorCell: UITableViewCell {
 
 private class HumanAgentWaitingCell: UITableViewCell {
     fileprivate static let id: MessageID = UUID()
-    fileprivate static let reuseIdentifier = String(describing: ErrorCell.self)
+    fileprivate static let reuseIdentifier = String(describing: HumanAgentWaitingCell.self)
 
     var participation: HumanAgentParticipation? {
         didSet {

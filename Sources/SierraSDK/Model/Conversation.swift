@@ -230,7 +230,7 @@ public class Conversation {
                 delegate.conversation(self, didHaveError: error, withMessage: nil)
             }
         }
-        if !isSynchronouslyTransferred {
+        if !isSynchronouslyTransferred || humanAgentParticipation?.state == .joined {
             canSend = true
         }
     }
