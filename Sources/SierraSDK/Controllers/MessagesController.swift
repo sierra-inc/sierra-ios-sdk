@@ -493,11 +493,42 @@ private class HumanAgentWaitingCell: UITableViewCell {
     }
 
     private var options: MessagesControllerOptions?
+    private let mainStackView = UIStackView()
+    private let textStackView = UIStackView()
+    private let iconView = UIImageView()
+    private let waitingTextLabel = UILabel()
+    private let queueSizeTextLabel = UILabel()
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: .default, reuseIdentifier: reuseIdentifier)
         contentView.transform = FLIP_TRANSFORM
-        textLabel?.numberOfLines = 0
+
+        mainStackView.axis = .horizontal
+        mainStackView.distribution = .fill
+        mainStackView.alignment = .leading
+        mainStackView.spacing = 8
+
+        iconView.image = UIImage(named: "Headset", in: .module, compatibleWith: nil)
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.tintAdjustmentMode = .normal
+
+        textStackView.axis = .vertical
+        textStackView.distribution = .fill
+        textStackView.alignment = .fill
+        textStackView.spacing = 4
+
+        contentView.addSubview(mainStackView)
+        mainStackView.addArrangedSubview(iconView)
+        mainStackView.addArrangedSubview(textStackView)
+
+        textStackView.addArrangedSubview(waitingTextLabel)
+        textStackView.addArrangedSubview(queueSizeTextLabel)
+
+        mainStackView.translatesAutoresizingMaskIntoConstraints = false
+        textStackView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        waitingTextLabel.translatesAutoresizingMaskIntoConstraints = false
+        queueSizeTextLabel.translatesAutoresizingMaskIntoConstraints = false
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -505,32 +536,71 @@ private class HumanAgentWaitingCell: UITableViewCell {
     }
 
     fileprivate func applyOptions(_ options: MessagesControllerOptions) {
+        if self.options != nil {
+            return
+        }
+
         let colors = options.chatStyle.colors
-        textLabel?.textColor = colors.statusText
-        textLabel?.textAlignment = .center
-        textLabel?.font = .preferredFont(forTextStyle: .caption1)
+        let layout = options.chatStyle.layout
+
+        mainStackView.layer.borderWidth = 1
+        mainStackView.layer.cornerRadius = layout.humanAgentWaitingBubbleRadius
+        mainStackView.backgroundColor = colors.backgroundColor
+
+        waitingTextLabel.textColor = colors.assistantBubbleText
+        waitingTextLabel.font = .preferredFont(forTextStyle: .headline)
+        queueSizeTextLabel.textColor = colors.statusText
+        queueSizeTextLabel.font = .preferredFont(forTextStyle: .caption1)
+        iconView.tintColor = colors.assistantBubbleText
         backgroundColor = colors.backgroundColor
+        let leadingAnchor = readableContentGuide.leadingAnchor
+        let trailingAnchor = readableContentGuide.trailingAnchor
+
+        mainStackView.isLayoutMarginsRelativeArrangement = true
+        mainStackView.directionalLayoutMargins = NSDirectionalEdgeInsets(top: layout.bubbleYPadding, leading: layout.bubbleXPadding, bottom: layout.bubbleYPadding, trailing: layout.bubbleXPadding)
+
+        NSLayoutConstraint.activate([
+            iconView.widthAnchor.constraint(equalToConstant: 20),
+            iconView.heightAnchor.constraint(equalToConstant: 20),
+
+            mainStackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: layout.bubbleYMargin),
+            mainStackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -layout.bubbleYMargin),
+            mainStackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: layout.bubbleXMargin),
+            mainStackView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -layout.bubbleXMargin),
+        ])
+
         self.options = options
+
+        updateLayerColors()
+    }
+
+    private func updateLayerColors() {
+        guard let options else { return }
+        mainStackView.layer.borderColor = options.chatStyle.colors.assistantBubbleText.withAlphaComponent(0.15).cgColor
+    }
+
+    override open func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+       super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            updateLayerColors()
+        }
     }
 
     private func render(_ participation: HumanAgentParticipation) {
         guard let options else { return }
-        guard let textLabel else { return }
 
+        waitingTextLabel.text = options.humanAgentTransferWaitingMessage
         if let queueSize = participation.queueSize {
-            if queueSize == 0 {
-                textLabel.text = options.humanAgentTransferQueueNextMessage
+            if queueSize <= 1 {
+                queueSizeTextLabel.text = options.humanAgentTransferQueueNextMessage
             } else {
-                let ordinalFormatter = NumberFormatter()
-                ordinalFormatter.numberStyle = .ordinal
-                if let position = ordinalFormatter.string(from: NSNumber(value: queueSize)) {
-                    textLabel.text = options.humanAgentTransferQueueSizeMessage.replacingOccurrences(of: "{POSITION}", with: position)
-                } else {
-                    textLabel.text = options.humanAgentTransferWaitingMessage
-                }
+                queueSizeTextLabel.text = options.humanAgentTransferQueueSizeMessage.replacingOccurrences(of: "{QUEUE_SIZE}", with: queueSize.formatted())
             }
+            queueSizeTextLabel.isHidden = false
+            waitingTextLabel.font = .preferredFont(forTextStyle: .subheadline)
         } else {
-            textLabel.text = options.humanAgentTransferWaitingMessage
+            queueSizeTextLabel.isHidden = true
+            waitingTextLabel.font = .preferredFont(forTextStyle: .headline)
         }
     }
 }

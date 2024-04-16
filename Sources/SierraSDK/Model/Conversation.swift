@@ -343,7 +343,8 @@ public class Conversation {
                     if let _ = error as? CancellationError {
                         cancelled = true
                     } else {
-                        backoffDelay *= min(pow(1.5, Double(consecutiveErrors)), 60.0)
+                        backoffDelay *= pow(1.5, Double(consecutiveErrors))
+                        backoffDelay = min(backoffDelay, 60.0)
                         consecutiveErrors += 1
                         debugLog("Polling error: \(error), will retry in \(backoffDelay)s")
                         try await Task.sleep(nanoseconds: UInt64(backoffDelay * 1_000_000_000))

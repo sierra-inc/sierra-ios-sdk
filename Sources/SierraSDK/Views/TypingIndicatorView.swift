@@ -5,7 +5,7 @@ import UIKit
 class TypingIndicatorView: UIView {
     var dotColor: UIColor {
         didSet {
-            dotLayers.forEach { $0.backgroundColor = dotColor.cgColor }
+            updateDotColors()
         }
     }
     private let dotLayers = [CALayer(), CALayer(), CALayer()]
@@ -43,6 +43,13 @@ class TypingIndicatorView: UIView {
         }
     }
 
+    override open func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+       super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            updateDotColors()
+        }
+    }
+
     private func startAnimating() {
         var delay = 0.0
         let animation = CABasicAnimation(keyPath: "opacity")
@@ -64,5 +71,9 @@ class TypingIndicatorView: UIView {
         for dotLayer in dotLayers {
             dotLayer.removeAnimation(forKey: "opacityPulse")
         }
+    }
+
+    private func updateDotColors() {
+        dotLayers.forEach { $0.backgroundColor = dotColor.cgColor }
     }
 }

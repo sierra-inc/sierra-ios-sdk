@@ -97,6 +97,9 @@ public struct ChatStyleLayout {
     /// Maximum absolute width of the bubble (0 to disable)
     let bubbleMaxWidthAbsolute: CGFloat
 
+    /// Radius of the bubble that's used when waiting for a human agent to join the conversation.
+    let humanAgentWaitingBubbleRadius: CGFloat
+
     public init(bubbleRadius: CGFloat = 20,
                 bubbleTail: Bool = true,
                 bubbleXPadding: CGFloat = 14,
@@ -104,7 +107,8 @@ public struct ChatStyleLayout {
                 bubbleXMargin: CGFloat = 0,
                 bubbleYMargin: CGFloat = 6,
                 bubbleMaxWidthFraction: CGFloat = 0.85,
-                bubbleMaxWidthAbsolute: CGFloat = 600) {
+                bubbleMaxWidthAbsolute: CGFloat = 600,
+                humanAgentWaitingBubbleRadius: CGFloat = 12) {
         self.bubbleRadius = bubbleRadius
         self.bubbleTail = bubbleTail
         self.bubbleXPadding = bubbleXPadding
@@ -113,6 +117,7 @@ public struct ChatStyleLayout {
         self.bubbleYMargin = bubbleYMargin
         self.bubbleMaxWidthFraction = bubbleMaxWidthFraction
         self.bubbleMaxWidthAbsolute = bubbleMaxWidthAbsolute
+        self.humanAgentWaitingBubbleRadius = humanAgentWaitingBubbleRadius
     }
 }
 

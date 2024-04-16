@@ -20,13 +20,13 @@ public struct AgentChatControllerOptions {
     public var humanAgentTransferWaitingMessage: String = "Waiting for agent…"
 
     /// Message shown when waiting for a human agent to join the conversation,
-    /// and the queue size is known. "{POSITION}" will be replaced with a localized
-    /// ordinal showing the position.
-    public var humanAgentTransferQueueSizeMessage: String = "Waiting for agent (you are {POSITION} in line)…"
+    /// and the queue size is known. "{QUEUE_SIZE}" will be replaced with the
+    /// size of the queue.
+    public var humanAgentTransferQueueSizeMessage: String = "Queue Size: {QUEUE_SIZE}"
 
     /// Message shown when waiting for a human agent to join the conversation,
     /// and the user is next in line.
-    public var humanAgentTransferQueueNextMessage: String = "Waiting for agent (you are next)…"
+    public var humanAgentTransferQueueNextMessage: String = "You are next in line"
 
     /// Message shown when a human agent has joined the conversation.
     public var humanAgentTransferJoinedMessage: String = "Agent connected"
