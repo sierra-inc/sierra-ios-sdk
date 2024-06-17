@@ -37,8 +37,20 @@ public struct AgentChatControllerOptions {
     /// Placeholder value displayed in the chat input when it is empty.
     public var inputPlaceholder: String = "Message…"
 
+    /// Shown in place of the chat input when the conversation has ended.
+    public var conversationEndedMessage: String = "Chat Ended";
+
     /// Customize the look and feel of the chat
     public var chatStyle: ChatStyle = DEFAULT_CHAT_STYLE
+
+    /// If set to true user will be able to save a conversation transcript via a menu item.
+    public var canSaveTranscript: Bool = false;
+
+    /// Menu label for the conversation transcript saving item.
+    public var saveTranscriptLabel: String = "Save Transcript"
+
+    /// File name for the generated transcript file.
+    public var transcriptFileName: String = "Transcript"
 
     /// Customization of the Conversation that the controller will create.
     public var conversationOptions: ConversationOptions?
@@ -53,7 +65,7 @@ public struct AgentChatControllerOptions {
     }
 }
 
-public class AgentChatController : UIViewController {
+public class AgentChatController : UIViewController, ConversationDelegate {
     private let options: AgentChatControllerOptions
     private let conversation: Conversation
     private let messagesController: MessagesController
@@ -92,7 +104,7 @@ public class AgentChatController : UIViewController {
             errorMessage: options.errorMessage,
             chatStyle: options.chatStyle
         ))
-        inputController = InputController(conversation: conversation, placeholder: options.inputPlaceholder, chatStyle: options.chatStyle)
+        inputController = InputController(conversation: conversation, placeholder: options.inputPlaceholder, conversationEndedMessage: options.conversationEndedMessage, chatStyle: options.chatStyle)
         optionsConversationDelegate = options.conversationDelegate
         super.init(nibName: nil, bundle: nil)
 
@@ -141,20 +153,20 @@ public class AgentChatController : UIViewController {
 
         let safeAreaGuide = view.safeAreaLayoutGuide
         let keyboardGuide = view.keyboardLayoutGuide
-        let readableGuide = view.readableContentGuide
         NSLayoutConstraint.activate([
             messagesView.leadingAnchor.constraint(equalTo: safeAreaGuide.leadingAnchor),
             messagesView.trailingAnchor.constraint(equalTo: safeAreaGuide.trailingAnchor),
             messagesView.topAnchor.constraint(equalTo: safeAreaGuide.topAnchor),
             messagesView.bottomAnchor.constraint(equalTo: inputView.topAnchor, constant: -12),
-            inputView.leadingAnchor.constraint(equalTo: readableGuide.leadingAnchor),
-            inputView.trailingAnchor.constraint(equalTo: readableGuide.trailingAnchor),
+            inputView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            inputView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             inputView.bottomAnchor.constraint(equalTo: keyboardGuide.topAnchor, constant: -9),
         ])
     }
 
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        conversation.addDelegate(self)
         if let optionsConversationDelegate {
             conversation.addDelegate(optionsConversationDelegate)
         }
@@ -162,8 +174,70 @@ public class AgentChatController : UIViewController {
 
     public override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        conversation.removeDelegate(self)
         if let optionsConversationDelegate {
             conversation.removeDelegate(optionsConversationDelegate)
         }
+    }
+
+    // MARK: ConversationDelegate
+
+    public func conversation(_ conversation: Conversation, didChangeCanSaveTranscript canSaveTranscript: Bool) {
+        updateActionMenu()
+    }
+
+    private func updateActionMenu() {
+        var menuItems: [UIMenuElement] = []
+
+        if options.canSaveTranscript && conversation.canSaveTranscript {
+            menuItems.append(UIAction(title: options.saveTranscriptLabel, image: UIImage(systemName: "square.and.arrow.down.on.square")) { [weak self] _ in
+                Task {
+                    await self?.saveTranscript()
+                }
+            })
+        }
+
+        if menuItems.isEmpty {
+            navigationItem.rightBarButtonItem = nil
+        } else {
+            let menuButton = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), style: .plain, target: self, action: nil)
+            menuButton.menu = UIMenu(children: menuItems)
+            navigationItem.rightBarButtonItem = menuButton
+        }
+    }
+}
+
+extension AgentChatController: UIDocumentInteractionControllerDelegate {
+    private func saveTranscript() async {
+        let activityIndicator = UIActivityIndicatorView(style: .medium)
+        activityIndicator.color = .tintColor
+        let barButton = UIBarButtonItem(customView: activityIndicator)
+        let previouRightBarButtonItem = self.navigationItem.rightBarButtonItem
+        self.navigationItem.rightBarButtonItem = barButton
+        activityIndicator.startAnimating()
+        defer {
+            activityIndicator.stopAnimating()
+            self.navigationItem.rightBarButtonItem = previouRightBarButtonItem
+        }
+
+        do {
+            let pdfData = try await self.conversation.saveTranscript()
+
+            let pdfDataURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(self.options.transcriptFileName).pdf")
+            try pdfData.write(to: pdfDataURL)
+
+            let documentInteractionController = UIDocumentInteractionController(url: pdfDataURL)
+            documentInteractionController.delegate = self
+            documentInteractionController.presentPreview(animated: true)
+        } catch {
+            debugLog("Cannot save transcript, error: \(error)")
+            let alert = UIAlertController(title: nil, message: self.options.errorMessage, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            self.present(alert, animated: true)
+        }
+    }
+
+    public func documentInteractionControllerViewControllerForPreview(_ controller: UIDocumentInteractionController) -> UIViewController {
+        return self
     }
 }

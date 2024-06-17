@@ -32,11 +32,29 @@ public class Conversation {
             }
         }
     }
+    public var conversationEnded: Bool = false {
+        didSet {
+            forEachDelegate { delegate in
+                delegate.conversation(self, didChangeConversationEnded: self.conversationEnded)
+            }
+        }
+    }
     public var isSynchronouslyTransferred: Bool = false
+    public var canSaveTranscript: Bool {
+        get {
+            return state != nil
+        }
+    }
 
     private let api: AgentAPI
     private let options: ConversationOptions?
-    private var state: String?
+    private var state: String? {
+        didSet {
+            forEachDelegate { delegate in
+                delegate.conversation(self, didChangeCanSaveTranscript: self.canSaveTranscript)
+            }
+        }
+    }
     private var delegates = NSHashTable<AnyObject>.weakObjects()
     private var humanAgentParticipation: HumanAgentParticipation? {
         didSet {
@@ -53,6 +71,7 @@ public class Conversation {
     }
     private var pollingTask: Task<Void, Error>?
     private var pollingCursor: String?
+    private var hasConversationEndMessage: Bool = false
 
     init(api: AgentAPI, options: ConversationOptions?) {
         self.api = api
@@ -118,6 +137,15 @@ public class Conversation {
        }
     }
 
+    public func saveTranscript() async throws -> Data {
+        guard let state else {
+            throw ConversationError.stateNotAvailable
+        }
+
+       let pdfData = try await api.saveTranscript(state: state, options: options)
+       return pdfData
+    }
+
     public func sendUserMessage(text: String) async {
         if !canSend {
             debugLog("Cannot send message, send already in progress")
@@ -165,38 +193,7 @@ public class Conversation {
                     state = event.state
                 case "message":
                     guard let message = event.message else { continue }
-                    if message.role != "assistant" {
-                        continue
-                    }
-                    let messageText = message.text
-                    let isEndOfMessage = message.isEndOfMessage
-                    let preparingFollowup = message.preparingFollowup
-                    if let messageText {
-                        if assistantMessageIndex == -1 {
-                            let assistantMessage = Message(role: .assistant, content: "")
-                            assistantMessageIndex = messages.count
-                            messages.append(assistantMessage)
-                            forEachDelegate { delegate in
-                                delegate.conversation(self, didAddMessages: [assistantMessage.id])
-                            }
-                        }
-                        messages[assistantMessageIndex].appendContent(piece: messageText)
-                        let assistantMessageID = messages[assistantMessageIndex].id
-                        forEachDelegate { delegate in
-                            delegate.conversation(self, didChangeMessage: assistantMessageID)
-                        }
-                    }
-                    if let isEndOfMessage, isEndOfMessage {
-                        assistantMessageIndex = -1
-                    }
-                    if let preparingFollowup, preparingFollowup {
-                        let assistantMessage = Message.createInitialAssistantMessage()
-                        assistantMessageIndex = messages.count
-                        messages.append(assistantMessage)
-                        forEachDelegate { delegate in
-                            delegate.conversation(self, didAddMessages: [assistantMessage.id])
-                        }
-                    }
+                    updateWithMessageEvent(&assistantMessageIndex, message)
                 case "transfer":
                     guard let transfer = event.transfer else { continue }
                     cleanupTypingIndicator()
@@ -212,6 +209,10 @@ public class Conversation {
                     if transfer.isContactCenter ?? false {
                         humanAgentParticipation = HumanAgentParticipation()
                     }
+                case "endConversation":
+                    guard let endConversation = event.endConversation else { continue }
+                    cleanupTypingIndicator()
+                    conversationEnded = true
                 case "error":
                     guard let error = event.error else { continue }
                     let errorMessage = error.userVisibleMessage
@@ -226,13 +227,15 @@ public class Conversation {
         } catch {
             debugLog("Cannot send message, error: \(error)")
             cleanupTypingIndicator()
-            forEachDelegate { delegate in
-                delegate.conversation(self, didHaveError: error, withMessage: nil)
+            forEachDelegate{ delegate in
+                delegate.conversation(self, didHaveError: error, withMessage: (error as? AgentChatError)?.errorMessage)
             }
         }
-        if !isSynchronouslyTransferred || humanAgentParticipation?.state == .joined {
+        if !conversationEnded && (!isSynchronouslyTransferred || humanAgentParticipation?.state == .joined) {
             canSend = true
         }
+
+        await checkForConversationEnd()
     }
 
     private func startPolling() {
@@ -263,7 +266,7 @@ public class Conversation {
                 }
             }
 
-            while !cancelled {
+            while !cancelled && !conversationEnded {
                 do {
                     let stream = try await api.poll(state: state, cursor: pollingCursor, options: options)
                     // Consume the stream
@@ -288,13 +291,19 @@ public class Conversation {
                             }
 
                             if typingIndicatorMessageIndex == -1 {
-                                let agentMessage = Message(role: .humanAgent, content: message.text ?? "")
+                                var agentMessage = Message(role: .humanAgent, content: message.text ?? "")
+                                if let attachments = message.attachments {
+                                    agentMessage.appendAttachments(attachments)
+                                }
                                 messages.append(agentMessage)
                                 let agentMessageID = agentMessage.id
                                 forEachDelegate { [agentMessageID] delegate in
                                     delegate.conversation(self, didAddMessages: [agentMessageID])
                                 }
                             } else {
+                                if let attachments = message.attachments {
+                                    messages[typingIndicatorMessageIndex].appendAttachments(attachments)
+                                }
                                 messages[typingIndicatorMessageIndex].appendContent(piece: message.text ?? "")
                                 let agentMessageID = messages[typingIndicatorMessageIndex].id
                                 typingIndicatorMessageIndex = -1
@@ -329,6 +338,10 @@ public class Conversation {
                                 }
                             }
                             self.humanAgentParticipation = humanAgentParticipation
+                        case "endConversation":
+                            guard let endConversation = event.endConversation else { continue }
+                            cleanupTypingIndicator()
+                            conversationEnded = true
                         case "error":
                             guard let error = event.error else { continue }
                             let errorMessage = error.userVisibleMessage
@@ -339,6 +352,7 @@ public class Conversation {
                             debugLog("Unknown event type: \(event.type)")
                         }
                     }
+                    await checkForConversationEnd()
                 } catch {
                     if let _ = error as? CancellationError {
                         cancelled = true
@@ -359,6 +373,73 @@ public class Conversation {
         pollingTask.cancel()
         self.pollingTask = nil
     }
+
+    private func updateWithMessageEvent(_ assistantMessageIndex: inout Int, _ message: APIEvent.Message) {
+        if message.role != "assistant" {
+            return
+        }
+        let messageText = message.text
+        let messageAttachments = message.attachments ?? []
+        let isEndOfMessage = message.isEndOfMessage
+        let preparingFollowup = message.preparingFollowup
+        if messageText != nil || !messageAttachments.isEmpty {
+            if assistantMessageIndex == -1 {
+                let assistantMessage = Message(role: .assistant, content: "")
+                assistantMessageIndex = messages.count
+                messages.append(assistantMessage)
+                forEachDelegate { delegate in
+                    delegate.conversation(self, didAddMessages: [assistantMessage.id])
+                }
+            }
+            if let messageText {
+                messages[assistantMessageIndex].appendContent(piece: messageText)
+            }
+            if !messageAttachments.isEmpty {
+                messages[assistantMessageIndex].appendAttachments(messageAttachments)
+            }
+            let assistantMessageID = messages[assistantMessageIndex].id
+            forEachDelegate { delegate in
+                delegate.conversation(self, didChangeMessage: assistantMessageID)
+            }
+        }
+        if let isEndOfMessage, isEndOfMessage {
+            assistantMessageIndex = -1
+        }
+        if let preparingFollowup, preparingFollowup {
+            let assistantMessage = Message.createInitialAssistantMessage()
+            assistantMessageIndex = messages.count
+            messages.append(assistantMessage)
+            forEachDelegate { delegate in
+                delegate.conversation(self, didAddMessages: [assistantMessage.id])
+            }
+        }
+    }
+
+    private func checkForConversationEnd() async {
+        if conversationEnded && !hasConversationEndMessage {
+            hasConversationEndMessage = true
+            do {
+                var assistantMessageIndex = -1
+                let stream = try await api.sendMessage(text: "", state: state, options: options, isConversationEnd: true)
+                for try await event in stream {
+                    switch event.type {
+                    case "message":
+                        guard let message = event.message else { continue }
+                        updateWithMessageEvent(&assistantMessageIndex, message)
+                    default:
+                        debugLog("Unknown event type: \(event.type)")
+                    }
+                }
+            } catch {
+                debugLog("Cannot send conversation end, error: \(error)")
+                // Not notifying the delegate, this is an internal operation that was not user-initiated
+            }
+        }
+    }
+}
+
+enum ConversationError: Error {
+    case stateNotAvailable
 }
 
 public protocol ConversationDelegate : AnyObject {
@@ -369,6 +450,8 @@ public protocol ConversationDelegate : AnyObject {
     func conversation(_ conversation: Conversation, didTransfer transfer: ConversationTransfer)
     func conversation(_ conversation: Conversation, didChangeCanSend canSend: Bool)
     func conversation(_ conversation: Conversation, didChangeHumanAgentParticipation participation: HumanAgentParticipation?, previousValue: HumanAgentParticipation?)
+    func conversation(_ conversation: Conversation, didChangeConversationEnded conversationEnded: Bool)
+    func conversation(_ conversation: Conversation, didChangeCanSaveTranscript canSaveTranscript: Bool)
 }
 
 // Default no-op implementations of ConversationDelegate, so that clients can
@@ -381,9 +464,14 @@ public extension ConversationDelegate {
     func conversation(_ conversation: Conversation, didTransfer transfer: ConversationTransfer) {}
     func conversation(_ conversation: Conversation, didChangeCanSend canSend: Bool) {}
     func conversation(_ conversation: Conversation, didChangeHumanAgentParticipation participation: HumanAgentParticipation?, previousValue: HumanAgentParticipation?) {}
+    func conversation(_ conversation: Conversation, didChangeConversationEnded conversationEnded: Bool) {}
+    func conversation(_ conversation: Conversation, didChangeCanSaveTranscript canSaveTranscript: Bool) {}
 }
 
 public typealias MessageID = UUID
+
+// For now attachments are intentionally not public.
+typealias MessageAttachment = APIEvent.Message.Attachment
 
 public struct Message: Identifiable {
 
@@ -398,6 +486,8 @@ public struct Message: Identifiable {
     public let role: Role
 
     public var content: String
+
+    var attachments: [MessageAttachment] = []
 
     static private let typingIndicatorContent = "•••"
 
@@ -419,6 +509,10 @@ public struct Message: Identifiable {
         } else {
             content += piece
         }
+    }
+
+    mutating func appendAttachments(_ attachments: [MessageAttachment]) {
+        self.attachments.append(contentsOf: attachments)
     }
 
     public func attributedContent(font: UIFont? = nil, textColor: UIColor? = nil) -> AttributedString? {

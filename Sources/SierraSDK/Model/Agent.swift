@@ -5,10 +5,38 @@ import UIKit
 
 public struct AgentConfig {
     public let token: String
-    public var apiBaseURL: String?
+    public var apiHost: AgentAPIHost = .prod
 
     public init(token: String) {
         self.token = token
+    }
+}
+
+public enum AgentAPIHost: String {
+    case prod = "prod"
+    case staging = "staging"
+    case local = "local"
+
+    var apiBaseURL: String {
+        switch self {
+        case .prod:
+            return "https://api.sierra.chat"
+        case .staging:
+            return "https://api-staging.sierra.chat"
+        case .local:
+            return "https://api.sierra.codes:8083"
+        }
+    }
+
+    var embedBaseURL: String {
+        switch self {
+        case .prod:
+            return "https://sierra.chat"
+        case .staging:
+            return "https://staging.sierra.chat"
+        case .local:
+            return "https://chat.sierra.codes:8083"
+        }
     }
 }
 
@@ -25,10 +53,10 @@ public class Agent {
 }
 
 class AgentAPI {
-    private static let API_COMPATIBILITY_DATE = "2023-10-26"
+    private static let API_COMPATIBILITY_DATE = "2024-04-17"
 
     private let token: String
-    private let baseURL: String
+    private let apiHost: AgentAPIHost
 
     private static func urlSessionConfig() -> URLSessionConfiguration {
         let config = URLSessionConfiguration.default
@@ -47,10 +75,10 @@ class AgentAPI {
 
     init(config: AgentConfig) {
         self.token = config.token
-        self.baseURL = config.apiBaseURL ?? "https://api.sierra.chat"
+        self.apiHost = config.apiHost
     }
 
-    func sendMessage(text: String, state: String?, options: ConversationOptions?, polling: Bool = false) async throws -> AsyncThrowingStream<APIEvent, Error> {
+    func sendMessage(text: String, state: String?, options: ConversationOptions?, polling: Bool = false, isConversationEnd: Bool = false) async throws -> AsyncThrowingStream<APIEvent, Error> {
         let locale = options?.locale ?? Locale.current
         let request = AgentChatRequest(
             token: token,
@@ -61,9 +89,10 @@ class AgentAPI {
             locale: locale.identifier,
             customGreeting: options?.customGreeting,
             enableContactCenter: options?.enableContactCenter,
-            polling: polling
+            polling: polling,
+            isConversationEnd: isConversationEnd
         )
-        var urlRequest = URLRequest(url: URL(string: "\(baseURL)/chat")!)
+        var urlRequest = URLRequest(url: URL(string: "\(apiHost.apiBaseURL)/chat")!)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.httpBody = try JSONEncoder().encode(request)
@@ -89,7 +118,7 @@ class AgentAPI {
             secrets: options?.secrets,
             cursor: cursor
         )
-        var urlRequest = URLRequest(url: URL(string: "\(baseURL)/chat/live/poll")!)
+        var urlRequest = URLRequest(url: URL(string: "\(apiHost.apiBaseURL)/chat/live/poll")!)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.httpBody = try JSONEncoder().encode(request)
@@ -111,10 +140,32 @@ class AgentAPI {
             }
         }
     }
+
+    @MainActor
+    func saveTranscript(state: String, options: ConversationOptions?) async throws -> Data {
+        var request = URLRequest(url: URL(string: "\(apiHost.embedBaseURL)/agent/\(token)/transcript")!)
+        request.httpMethod = "POST"
+
+        var formParams = [
+            URLQueryItem(name: "token", value: token),
+            URLQueryItem(name: "state", value: state),
+        ]
+        if let customGreeting = options?.customGreeting {
+            formParams.append(URLQueryItem(name: "greeting", value: customGreeting))
+        }
+        var formData = URLComponents()
+        formData.queryItems = formParams
+        request.httpBody = formData.query?.data(using: .utf8)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+
+        let generator = TranscriptPDFGenerator(request: request)
+        let pdfData = try await generator.generate()
+        return pdfData
+    }
 }
 
 // Matches the publicChatArguments type from public.go
-struct AgentChatRequest: Codable {
+struct AgentChatRequest: Encodable {
     let token: String
     let message: String
     let state: String?
@@ -124,10 +175,11 @@ struct AgentChatRequest: Codable {
     let customGreeting: String?
     let enableContactCenter: Bool?
     let polling: Bool?
+    let isConversationEnd: Bool?
 }
 
 // Matches the livePollArguments type from live.go
-struct AgentPollRequest: Codable {
+struct AgentPollRequest: Encodable {
     let token: String
     let state: String?
     let variables: [String: String]?
@@ -136,20 +188,47 @@ struct AgentPollRequest: Codable {
 }
 
 // Matches pubapi.Event and related (Go)
-struct APIEvent: Codable {
+struct APIEvent: Decodable {
     let type: String
 
     let state: String?
 
-    struct Message: Codable {
+    struct Message: Decodable {
         let role: String?
         let text: String?
         let isEndOfMessage: Bool?
         let preparingFollowup: Bool?
+        let attachments: [Attachment]?
+
+        struct Attachment: Decodable {
+            let type: String
+            let buttonData: ButtonData?
+
+            enum CodingKeys: String, CodingKey {
+                case type
+                case data
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                type = try container.decode(String.self, forKey: .type)
+                if let decodedButtonData = try? container.decode(ButtonData.self, forKey: .data), decodedButtonData.type == "button" {
+                    buttonData = decodedButtonData
+                } else {
+                    buttonData = nil
+                }
+            }
+
+            public struct ButtonData: Decodable {
+                let type: String
+                let url: String
+                let text: String
+            }
+        }
     }
     let message: Message?
 
-    struct Transfer: Codable {
+    struct Transfer: Decodable {
         let data: Dictionary<String, String>?
         let isSynchronous: Bool?
         let isContactCenter: Bool?
@@ -158,7 +237,7 @@ struct APIEvent: Codable {
 
     let livePollCursor: String?
 
-    struct HumanAgentInfo: Codable {
+    struct HumanAgentInfo: Decodable {
         let queueSize: Int?
         let displayName: String?
         let joined: Bool?
@@ -167,7 +246,12 @@ struct APIEvent: Codable {
     }
     let humanAgentInfo: HumanAgentInfo?
 
-    struct Error: Codable {
+    struct EndConversation: Decodable {
+        let reason: String?
+    }
+    let endConversation: EndConversation?
+
+    struct Error: Decodable {
         let userVisibleMessage: String?
     }
     let error: Error?
@@ -178,6 +262,7 @@ enum AgentChatError: LocalizedError {
     case serverError(String)
     case httpError(Int)
 
+    /// Logged message for the error
     var errorDescription: String? {
         switch self {
         case .invalidChatUpdate:
@@ -187,6 +272,21 @@ enum AgentChatError: LocalizedError {
         case .httpError(let code):
             return String(format: "An HTTP error occurred (code: %d)", code)
         }
+    }
+
+    /// User-visible message shown for any errors that should override the standard error string.
+    var errorMessage: String? {
+        switch self {
+        case .httpError(let code):
+            switch code {
+            case 410: return "This conversation cannot be continued. Please start a new one."
+            case 413: "The message you sent was too long. Please send something shorter.";
+            case 429: return "You've reached our message limit. Please try again later."
+            default: return nil
+            }
+            default: return nil
+        }
+        return nil
     }
 }
 
@@ -259,9 +359,11 @@ class AgentChatUpdateListener: NSObject, URLSessionDataDelegate {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
-        if let decoded = try? decoder.decode(APIEvent.self, from: jsonData) {
-            return decoded
+        do {
+            return try decoder.decode(APIEvent.self, from: jsonData)
+        } catch {
+            debugLog("could not decode: error=\(error)")
+            throw AgentChatError.invalidChatUpdate
         }
-        throw AgentChatError.invalidChatUpdate
     }
 }

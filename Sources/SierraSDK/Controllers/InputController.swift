@@ -5,12 +5,14 @@ import UIKit
 class InputController : UIViewController, UITextViewDelegate, ConversationDelegate {
     private let conversation: Conversation
     private let placeholder: String
+    private let conversationEndedMessage: String
     private let chatStyle: ChatStyle
     private var placeholderVisible: Bool = false
 
-    init(conversation: Conversation, placeholder: String, chatStyle: ChatStyle) {
+    init(conversation: Conversation, placeholder: String, conversationEndedMessage: String, chatStyle: ChatStyle) {
         self.conversation = conversation
         self.placeholder = placeholder
+        self.conversationEndedMessage = conversationEndedMessage
         self.chatStyle = chatStyle
         super.init(nibName: nil, bundle: nil)
     }
@@ -43,6 +45,13 @@ class InputController : UIViewController, UITextViewDelegate, ConversationDelega
         return button
     }()
 
+    private lazy var topBorder: UIView = {
+        let view = UIView()
+        view.backgroundColor = UIColor.systemFill
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+
     override func loadView() {
         let view = UIView(frame: UIScreen.main.bounds)
         view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -50,15 +59,25 @@ class InputController : UIViewController, UITextViewDelegate, ConversationDelega
         self.view = view
         view.addSubview(inputTextView)
         view.addSubview(sendButton)
+        view.addSubview(topBorder)
+
+        let readableGuide = view.readableContentGuide
+
         NSLayoutConstraint.activate([
             inputTextView.topAnchor.constraint(equalTo: view.topAnchor),
-            inputTextView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            inputTextView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            inputTextView.leadingAnchor.constraint(equalTo: readableGuide.leadingAnchor),
+            inputTextView.trailingAnchor.constraint(equalTo: readableGuide.trailingAnchor),
             inputTextView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
             sendButton.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -5),
-            sendButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -5),
+            sendButton.trailingAnchor.constraint(equalTo: readableGuide.trailingAnchor, constant: -5),
+
+            topBorder.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topBorder.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBorder.topAnchor.constraint(equalTo: view.topAnchor),
+            topBorder.heightAnchor.constraint(equalToConstant: 1),
         ])
+        topBorder.isHidden = true
         showPlaceholder()
         updateLayerColors()
         updateSendButton()
@@ -117,11 +136,13 @@ class InputController : UIViewController, UITextViewDelegate, ConversationDelega
     private func disableSend() {
         inputTextView.text = ""
         inputTextView.isEditable = false
+        inputTextView.isSelectable = false
         inputTextView.resignFirstResponder()
     }
 
     private func enableSend() {
         inputTextView.isEditable = true
+        inputTextView.isSelectable = true
     }
 
     // MARK: ConversationDelegate
@@ -141,6 +162,19 @@ class InputController : UIViewController, UITextViewDelegate, ConversationDelega
             disableSend()
         } else if participation?.state == .joined {
             enableSend()
+        }
+    }
+
+    func conversation(_ conversation: Conversation, didChangeConversationEnded conversationEnded: Bool) {
+        if conversationEnded {
+            disableSend()
+            inputTextView.text = conversationEndedMessage
+            inputTextView.textColor = .secondaryLabel
+            inputTextView.backgroundColor = chatStyle.colors.backgroundColor
+            inputTextView.layer.borderWidth = 0
+            inputTextView.textAlignment = .center
+            topBorder.isHidden = false
+            sendButton.isHidden = true
         }
     }
 

@@ -259,6 +259,8 @@ private class MessageCell: UITableViewCell {
     private var statusConstraints: [NSLayoutConstraint] = []
     private var senderNameShownConstraints: [NSLayoutConstraint] = []
     private var senderNameHiddenConstraints: [NSLayoutConstraint] = []
+    private var attachmentsShownConstraints: [NSLayoutConstraint] = []
+    private var attachmentsHiddenConstraints: [NSLayoutConstraint] = []
 
     private let textView: UITextView = {
         let textView = UITextView()
@@ -293,6 +295,12 @@ private class MessageCell: UITableViewCell {
         return label
     }()
 
+    private let attachmentsView : MessageCellAttachments = {
+        let attachmentsView = MessageCellAttachments()
+        attachmentsView.translatesAutoresizingMaskIntoConstraints = false
+        return attachmentsView
+    }()
+
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: .default, reuseIdentifier: reuseIdentifier)
         contentView.transform = FLIP_TRANSFORM
@@ -300,6 +308,7 @@ private class MessageCell: UITableViewCell {
         contentView.addSubview(tailImageView)
         contentView.addSubview(typingingIndicatorView)
         contentView.addSubview(senderNameLabel)
+        contentView.addSubview(attachmentsView)
         typingingIndicatorView.isHidden = true
     }
 
@@ -352,13 +361,21 @@ private class MessageCell: UITableViewCell {
             textView.topAnchor.constraint(equalTo: senderNameLabel.bottomAnchor, constant: layout.bubbleYMargin),
             senderNameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 5),
         ]
-
         senderNameHiddenConstraints = [
             textView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: layout.bubbleYMargin),
         ]
 
-        NSLayoutConstraint.activate([
+        attachmentsShownConstraints = [
+            textView.bottomAnchor.constraint(equalTo: attachmentsView.topAnchor, constant: -layout.bubbleYMargin),
+            attachmentsView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -layout.bubbleYMargin),
+            attachmentsView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            attachmentsView.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ]
+        attachmentsHiddenConstraints = [
             textView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -layout.bubbleYMargin),
+        ]
+
+        NSLayoutConstraint.activate([
             tailImageView.bottomAnchor.constraint(equalTo: textView.bottomAnchor, constant: 1),
 
             // Make the typing indicator view track the size of the text view so that it also respects dyanmic text size.
@@ -414,6 +431,17 @@ private class MessageCell: UITableViewCell {
             NSLayoutConstraint.activate(statusConstraints)
         }
 
+        if message.attachments.isEmpty {
+            NSLayoutConstraint.deactivate(attachmentsShownConstraints)
+            NSLayoutConstraint.activate(attachmentsHiddenConstraints)
+            attachmentsView.isHidden = true
+        } else {
+            NSLayoutConstraint.deactivate(attachmentsHiddenConstraints)
+            NSLayoutConstraint.activate(attachmentsShownConstraints)
+            attachmentsView.isHidden = false
+            attachmentsView.render(message.attachments, colors: colors)
+        }
+
         typingingIndicatorView.isHidden = true
         if message.role == .assistant || message.role == .humanAgent {
             if message.isTypingIndicator {
@@ -431,6 +459,7 @@ private class MessageCell: UITableViewCell {
                 return
             }
         }
+
         textView.text = message.content
     }
 
@@ -447,6 +476,65 @@ private class MessageCell: UITableViewCell {
         }
     }
 }
+
+class MessageCellAttachments: UIView {
+    private let stackView: UIStackView
+
+    init() {
+        stackView = UIStackView()
+        stackView.axis = .vertical
+        stackView.alignment = .leading
+        stackView.spacing = 8
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+
+        super.init(frame: .zero)
+        addSubview(stackView)
+        NSLayoutConstraint.activate([
+            stackView.topAnchor.constraint(equalTo: self.topAnchor),
+            stackView.leadingAnchor.constraint(equalTo: self.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: self.trailingAnchor),
+            stackView.bottomAnchor.constraint(equalTo: self.bottomAnchor)
+        ])
+    }
+
+    fileprivate func render(_ attachments: [MessageAttachment], colors: ChatStyleColors?) {
+        for subview in stackView.subviews {
+            subview.removeFromSuperview()
+        }
+        for attachment in attachments {
+            if let buttonData = attachment.buttonData {
+                let button = UIButton(type: .system)
+                var configuration = UIButton.Configuration.borderedProminent()
+                configuration.cornerStyle = .capsule
+                if let colors {
+                    configuration.baseBackgroundColor = colors.assistantBubble
+                    configuration.baseForegroundColor = colors.assistantBubbleText
+                    configuration.background.strokeWidth = 1
+                    configuration.background.strokeColor = colors.assistantBubbleText.withAlphaComponent(0.3)
+                }
+                configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+                    var outgoing = incoming
+                    outgoing.font = UIFont.systemFont(ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize, weight: .medium)
+                    return outgoing
+                }
+                button.configuration = configuration
+
+                button.setTitle(buttonData.text, for: .normal)
+                button.addAction(.init(handler: { _ in
+                    if let url = URL(string: buttonData.url) {
+                        UIApplication.shared.open(url)
+                    }
+                }), for: .primaryActionTriggered)
+                stackView.addArrangedSubview(button)
+            }
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("Unreachable")
+    }
+}
+
 
 private class ErrorCell: UITableViewCell {
     fileprivate static let id: MessageID = UUID()
