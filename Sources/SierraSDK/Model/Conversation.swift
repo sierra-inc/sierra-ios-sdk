@@ -158,10 +158,14 @@ public class Conversation {
         var polling = false
         var assistantMessageIndex = -1
         var newMessageIDs = [userMessage.id]
-        if pollingTask != nil && self.humanAgentParticipation != nil {
-            // We're polling while interacting with a human agent, in which case
-            // we'll get back responses via the polling loop, and we can't assume
-            // that the agent will start typing immediately.
+        if self.humanAgentParticipation != nil {
+            // We're interacting with a human agent, in which case we'll get back
+            // responses via the polling loop, and we can't assume that the agent
+            // will start typing immediately.
+            if pollingTask == nil {
+                debugLog("Restarting polling loop")
+                self.startPolling()
+            }
             polling = true
         } else {
             var assistantMessage = Message.createInitialAssistantMessage()
@@ -282,6 +286,15 @@ public class Conversation {
                             guard let message = event.message else { continue }
                             if message.role != "human_agent" {
                                 continue
+                            }
+                            // If we somehow missed the humanAgentInfo update but the human agent is sending
+                            // messages to the user, they should be able to respond.
+                            if self.humanAgentParticipation?.state != .left && !canSend {
+                                debugLog("Overriding canSend due to human agent message")
+                                var humanAgentParticipation = self.humanAgentParticipation ?? HumanAgentParticipation()
+                                humanAgentParticipation.state = .joined
+                                self.humanAgentParticipation = humanAgentParticipation
+                                canSend = true
                             }
 
                             // More messages (possibly from the user) appeared after we added the typing indicator. Remove it
