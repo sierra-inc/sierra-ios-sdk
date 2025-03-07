@@ -22,7 +22,83 @@ public struct ConversationOptions {
     public init() { }
 }
 
+public protocol ConversationCallbacks: AnyObject {
+    /// Callback invoked when the user chatting with the virtual agent has requested a transfer to an
+    /// external agent.
+    func onConversationTransfer(transfer: ConversationTransfer)
+    /// Callback invoked when the virtual agent finishes replying to the user.
+    /// Not invoked for the greeting message.
+    func onAgentMessageEnd()
+    /// Callback invoked when the conversation ends.
+    func onConversationEnded()
+}
+
+// Default no-op implementations of ConversationCallbacks, so that clients can
+// implement only the subset that they care about.
+public extension ConversationCallbacks {
+    func onConversationTransfer(transfer: ConversationTransfer) {}
+    func onAgentMessageEnd() {}
+    func onConversationEnded() {}
+}
+
+public struct ConversationTransfer {
+    /// True if a synchronous transfer was requested, and the user expects the
+    /// conversation to continue immediately.
+    public let isSynchronous: Bool
+    /// True if the transfer was handled by a Sierra Contact Center integration,
+    /// and the conversation with the human agent will continue in the same chat.
+    public let isContactCenter: Bool
+    /// Additional (customer-specific) data, to allow a hand-off from the virtual
+    /// agent to the external agent.
+    public let data: Dictionary<String, String>
+}
+
+extension ConversationTransfer: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case isSynchronous, isContactCenter, data
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isSynchronous = try container.decodeIfPresent(Bool.self, forKey: .isSynchronous) ?? false
+        isContactCenter = try container.decodeIfPresent(Bool.self, forKey: .isContactCenter) ?? false
+
+        let dataArray = try container.decodeIfPresent([[String: String]].self, forKey: .data) ?? []
+        var dataMap = [String: String]()
+        for item in dataArray {
+            if let key = item["key"], let value = item["value"] {
+                dataMap[key] = value
+            }
+        }
+        data = dataMap
+    }
+}
+
+extension ConversationTransfer {
+    public static func fromJSON(_ json: String) -> ConversationTransfer? {
+        guard let jsonData = json.data(using: .utf8) else {
+            debugLog("Could not convert JSON string to data")
+            return nil
+        }
+        do {
+            let decoder = JSONDecoder()
+            return try decoder.decode(ConversationTransfer.self, from: jsonData)
+        } catch {
+            debugLog("Error decoding transfer data: \(error)")
+            return nil
+        }
+    }
+}
+
+func debugLog(_ message: String) {
+    #if DEBUG
+    debugPrint(message)
+    #endif
+}
+
+
 /// Conversation encapsulates the UI state of a agent conversation
+@available(*, deprecated)
 public class Conversation {
     public var messages: [Message] = []
     public var canSend: Bool = true {
@@ -455,6 +531,7 @@ enum ConversationError: Error {
     case stateNotAvailable
 }
 
+@available(*, deprecated, message: "Use ConversationCallbacks instead")
 public protocol ConversationDelegate : AnyObject {
     func conversation(_ conversation: Conversation, didAddMessages messageIDs: [MessageID])
     func conversation(_ conversation: Conversation, didRemoveMessage messageID: MessageID)
@@ -486,6 +563,7 @@ public typealias MessageID = UUID
 // For now attachments are intentionally not public.
 typealias MessageAttachment = APIEvent.Message.Attachment
 
+@available(*, deprecated)
 public struct Message: Identifiable {
 
     public let id: MessageID = UUID()
@@ -554,36 +632,21 @@ public struct Message: Identifiable {
     }
 }
 
-public struct ConversationTransfer {
-    /// True if a synchronous transfer was requested, and the user expects the
-    /// conversation to continue immediately.
-    public let isSynchronous: Bool
-    /// True if the transfer was handled by a Sierra Contact Center integration,
-    /// and the conversation with the human agent will continue in the same chat.
-    public let isContactCenter: Bool
-    /// Additional (customer-specific) data, to allow a hand-off from the virtual
-    /// agent to the external agent.
-    public let data: Dictionary<String, String>
-}
-
+@available(*, deprecated)
 public struct HumanAgentParticipation {
     var state: HumanAgentParticipationState = .waiting
     var queueSize: Int? = nil
     var agent: HumanAgent? = nil
 }
 
+@available(*, deprecated)
 public enum HumanAgentParticipationState {
     case waiting
     case joined
     case left
 }
 
+@available(*, deprecated)
 public struct HumanAgent {
     let displayName: String
-}
-
-func debugLog(_ message: String) {
-    #if DEBUG
-    debugPrint(message)
-    #endif
 }

@@ -2,6 +2,7 @@
 
 import UIKit
 
+@available(*, deprecated)
 class InputController : UIViewController, UITextViewDelegate, ConversationDelegate {
     private let conversation: Conversation
     private let placeholder: String

@@ -2,6 +2,7 @@
 
 import UIKit
 
+@available(*, deprecated)
 class MessagesController : UITableViewController, ConversationDelegate {
     private let conversation: Conversation
     private let options: MessagesControllerOptions

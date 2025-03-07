@@ -1,6 +1,7 @@
 // Copyright Sierra
 
 import UIKit
+import WebKit
 
 public struct AgentChatControllerOptions {
     /// Name for this virtual agent, displayed as the navigation item title.
@@ -40,6 +41,12 @@ public struct AgentChatControllerOptions {
     /// Shown in place of the chat input when the conversation has ended.
     public var conversationEndedMessage: String = "Chat Ended";
 
+    /// Message shown when there is no internet connection.
+    public var noInternetConnectionErrorMessage: String = "No internet connection. Please check your connection and try again."
+
+    /// Message shown when the chat cannot be loaded.
+    public var chatLoadErrorMessage: String = "Could not load the chat"
+
     /// Customize the look and feel of the chat
     public var chatStyle: ChatStyle = DEFAULT_CHAT_STYLE
 
@@ -55,9 +62,10 @@ public struct AgentChatControllerOptions {
     /// Customization of the Conversation that the controller will create.
     public var conversationOptions: ConversationOptions?
 
-    /// Optional delegate that will be told when the conversation that
-    /// is being conducted changes state. This delegate is active for the
-    /// lifespan of the AgentChatController instance, even if view is hidden.
+    /// Optional callbacks that will be invoked at various points in the conversation lifecycle.
+    public weak var conversationCallbacks: ConversationCallbacks?
+
+    @available(*, deprecated, message: "Use conversationCallbacks instead.")
     public weak var conversationDelegate: ConversationDelegate?
 
     public init(name: String) {
@@ -65,7 +73,278 @@ public struct AgentChatControllerOptions {
     }
 }
 
-public class AgentChatController : UIViewController, ConversationDelegate {
+extension AgentChatControllerOptions {
+    func toQueryItems() -> [URLQueryItem] {
+        var queryItems = [URLQueryItem]()
+
+        // Should match the Brand type from bots/useChat.tsx
+        let brand: [String: Any] = [
+            "botName": name,
+            "errorMessage": errorMessage,
+            "greetingMessage": greetingMessage,
+            "disclosure": disclosure ?? "",
+            "inputPlaceholder": inputPlaceholder,
+            "agentTransferWaitingMessage": humanAgentTransferWaitingMessage,
+            "agentTransferQueueSizeMessage": humanAgentTransferQueueSizeMessage,
+            "agentTransferQueueNextMessage": humanAgentTransferQueueNextMessage,
+            "agentJoinedMessage": humanAgentTransferJoinedMessage,
+            "agentLeftMessage": humanAgentTransferLeftMessage,
+            "conversationEndedMessage": conversationEndedMessage,
+            "chatStyle": chatStyle.toJSONString(),
+        ]
+        do {
+            let brandData = try JSONSerialization.data(withJSONObject: brand, options: [])
+            if let brandJSON = String(data: brandData, encoding: .utf8) {
+                queryItems.append(URLQueryItem(name: "brand", value: brandJSON))
+            } else {
+                debugLog("Error: Unable to encode brand data as a string")
+            }
+        } catch {
+            debugLog ("Error serializing brand object: \(error)")
+        }
+
+        if let co = conversationOptions {
+            let locale = co.locale ?? Locale.current
+            queryItems.append(URLQueryItem(name: "locale", value: locale.identifier))
+            if let variables = co.variables {
+                for (name, value) in variables {
+                    queryItems.append(URLQueryItem(name: "variable", value: "\(name):\(value)"))
+                }
+            }
+            if let secrets = co.secrets {
+                for (name, value) in secrets {
+                    queryItems.append(URLQueryItem(name: "secret", value: "\(name):\(value)"))
+                }
+            }
+            if let enableContactCenter = co.enableContactCenter {
+                queryItems.append(URLQueryItem(name: "enableContactCenter", value: "\(enableContactCenter)"))
+            }
+            if let customGreeting = co.customGreeting, !customGreeting.isEmpty {
+                queryItems.append(URLQueryItem(name: "greeting", value: customGreeting))
+            }
+        }
+
+        if canSaveTranscript {
+            queryItems.append(URLQueryItem(name: "canPrintTranscript", value: "true"))
+        }
+        return queryItems
+    }
+}
+
+public class AgentChatController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler {
+    private var webView: CustomWebView!
+    private let agent: Agent
+    private var options: AgentChatControllerOptions
+    private var loadingSpinner: UIActivityIndicatorView?
+    private weak var optionsConversationCallbacks: ConversationCallbacks?
+
+    public init(agent: Agent, options: AgentChatControllerOptions) {
+        self.agent = agent
+        self.options = options
+
+        // The custom greeting was initially a UI-only concept and thus specified via AgentChatControllerOptions,
+        // but it now also affects the API. We copy it over to ConversationOptions so that it can be included in
+        // API requests.
+        var conversationOptions = options.conversationOptions
+        if !options.greetingMessage.isEmpty && conversationOptions?.customGreeting == nil {
+            if conversationOptions == nil {
+                conversationOptions = ConversationOptions()
+            }
+            conversationOptions?.customGreeting = options.greetingMessage
+            self.options.conversationOptions = conversationOptions
+        }
+
+        optionsConversationCallbacks = options.conversationCallbacks
+
+        super.init(nibName: nil, bundle: nil)
+        setupWebView()
+
+        navigationItem.title = options.name
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = options.chatStyle.colors.titleBar
+        appearance.titleTextAttributes[.foregroundColor] = options.chatStyle.colors.titleBarText
+        navigationItem.standardAppearance = appearance
+        navigationItem.scrollEdgeAppearance = appearance
+        navigationItem.compactAppearance = appearance
+        navigationItem.compactScrollEdgeAppearance = appearance
+    }
+
+    required public init?(coder aDecoder: NSCoder) {
+        fatalError("Unreachable")
+    }
+
+    private func setupWebView() {
+        let configuration = WKWebViewConfiguration()
+        let contentController = configuration.userContentController
+
+        // Add the script message handler
+        contentController.add(self, name: "chatHandler")
+
+        webView = CustomWebView(frame: .zero, configuration: configuration)
+        webView.backgroundColor = options.chatStyle.colors.backgroundColor
+        webView.isOpaque = true
+
+        // Make the content invisible until fully loaded
+        webView.scrollView.alpha = 0.0
+
+        let loadingSpinner = UIActivityIndicatorView(style: .large)
+        loadingSpinner.color = options.chatStyle.colors.titleBarText
+        loadingSpinner.translatesAutoresizingMaskIntoConstraints = false
+        loadingSpinner.hidesWhenStopped = true
+        loadingSpinner.startAnimating()
+
+        webView.addSubview(loadingSpinner)
+        NSLayoutConstraint.activate([
+            loadingSpinner.centerXAnchor.constraint(equalTo: webView.centerXAnchor),
+            loadingSpinner.centerYAnchor.constraint(equalTo: webView.centerYAnchor)
+        ])
+        self.loadingSpinner = loadingSpinner
+
+        webView.navigationDelegate = self
+        webView.customUserAgent = getUserAgent(isWebView: true)
+        webView.scrollView.backgroundColor = options.chatStyle.colors.backgroundColor
+        webView.scrollView.keyboardDismissMode = .interactive
+    }
+
+    public override func loadView() {
+        self.view = webView
+        loadChatURL()
+    }
+
+    private func loadChatURL() {
+        guard var urlComponents = URLComponents(string: self.agent.config.url) else {
+            debugLog("Invalid URL: \(self.agent.config.url)")
+            return
+        }
+
+        // Turn config and options into query parameters that mobile.tsx expects
+        var queryItems = self.options.toQueryItems()
+
+        // Always hideTitleBar for iOS
+        queryItems.append(URLQueryItem(name: "hideTitleBar", value: "true"))
+
+        // In iOS, we persist state via sessionStorage since we can rely on it being
+        // maintained across the iOS lifecycle.
+        queryItems.append(URLQueryItem(name: "persistenceMode", value: "tab"))
+
+        urlComponents.queryItems = queryItems
+        if let url = urlComponents.url {
+            let request = URLRequest(url: url)
+            webView.load(request)
+        }
+    }
+
+    // MARK: - WKScriptMessageHandler
+
+    public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any] else { return }
+
+        if message.name == "chatHandler" {
+            if let type = body["type"] as? String {
+                switch type {
+                case "onOpen":
+                    // Fade in only the content with a smooth animation
+                    DispatchQueue.main.async {
+                        self.loadingSpinner?.stopAnimating()
+                        UIView.animate(withDuration: 0.3, animations: {
+                            self.webView.scrollView.alpha = 1.0
+                        })
+                    }
+                case "onTransfer":
+                    if let dataJSONStr = body["dataJSONStr"] as? String {
+                       if let transfer = ConversationTransfer.fromJSON(dataJSONStr) {
+                           optionsConversationCallbacks?.onConversationTransfer(transfer: transfer)
+                       }
+                    }
+                case "onAgentMessageEnd":
+                    optionsConversationCallbacks?.onAgentMessageEnd()
+                case "onEndChat":
+                    optionsConversationCallbacks?.onConversationEnded()
+                default:
+                    debugLog("Received unknown message type: \(type)")
+                    break
+                }
+            }
+        }
+
+    }
+
+    deinit {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "chatHandler")
+    }
+
+    // MARK: - WKNavigationDelegate Methods
+
+    public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        loadingSpinner?.stopAnimating()
+        handleNavigationError(error)
+    }
+
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        loadingSpinner?.stopAnimating()
+        handleNavigationError(error)
+    }
+
+    public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // Allow navigation within the app
+        if navigationAction.navigationType == .linkActivated,
+           let url = navigationAction.request.url,
+           !url.absoluteString.hasPrefix(self.agent.config.url) {
+            // Handle external links - open in browser
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            decisionHandler(.cancel)
+            return
+        }
+
+        decisionHandler(.allow)
+    }
+
+    public func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        decisionHandler(.allow)
+    }
+
+    private func handleNavigationError(_ error: Error) {
+        let errorCode = (error as NSError).code
+
+        if errorCode == NSURLErrorCancelled {
+            return
+        }
+
+        let errorMessage: String
+        if errorCode == NSURLErrorNotConnectedToInternet {
+            errorMessage = options.noInternetConnectionErrorMessage
+        } else {
+            errorMessage = options.chatLoadErrorMessage
+        }
+
+        let alert = UIAlertController(title: "Error", message: errorMessage, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Close", style: .destructive) { [weak self] _ in
+            // If presented modally, dismiss the view controller
+            if self?.presentingViewController != nil {
+                self?.dismiss(animated: true)
+            }
+            // If pushed onto a navigation stack, pop back
+            else if let navigationController = self?.navigationController {
+                navigationController.popViewController(animated: true)
+            }
+        })
+        alert.addAction(UIAlertAction(title: "Retry", style: .default) { [weak self] _ in
+            self?.loadChatURL()
+            self?.loadingSpinner?.startAnimating()
+        })
+        present(alert, animated: true)
+    }
+}
+
+class CustomWebView: WKWebView {
+    override var inputAccessoryView: UIView? {
+        return nil
+    }
+}
+
+@available(*, deprecated)
+public class DeprecatedAgentChatController : UIViewController, ConversationDelegate {
     private let options: AgentChatControllerOptions
     private let conversation: Conversation
     private let messagesController: MessagesController
@@ -207,7 +486,7 @@ public class AgentChatController : UIViewController, ConversationDelegate {
     }
 }
 
-extension AgentChatController: UIDocumentInteractionControllerDelegate {
+extension DeprecatedAgentChatController: UIDocumentInteractionControllerDelegate {
     private func saveTranscript() async {
         let activityIndicator = UIActivityIndicatorView(style: .medium)
         activityIndicator.color = .tintColor

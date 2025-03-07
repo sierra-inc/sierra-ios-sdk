@@ -10,6 +10,10 @@ public struct AgentConfig {
     public init(token: String) {
         self.token = token
     }
+
+    var url: String {
+        return "\(apiHost.embedBaseURL)/agent/\(token)/mobile"
+    }
 }
 
 public enum AgentAPIHost: String {
@@ -42,16 +46,32 @@ public enum AgentAPIHost: String {
 
 public class Agent {
     private let api: AgentAPI
+    let config: AgentConfig
 
     init(config: AgentConfig) {
+        self.config = config
         self.api = AgentAPI(config: config)
     }
 
+    @available(*, deprecated)
     func newConversation(options: ConversationOptions?) -> Conversation {
         return Conversation(api: api, options: options)
     }
 }
 
+func getUserAgent(isWebView: Bool) -> String {
+    let hostAppIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
+    let hostAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+    let iosModel = UIDevice.current.model
+    let iosVersion = UIDevice.current.systemVersion
+    var userAgent = "Sierra-iOS-SDK (\(hostAppIdentifier)/\(hostAppVersion) \(iosModel)/\(iosVersion))"
+    if isWebView {
+        userAgent += " WebView"
+    }
+    return userAgent
+}
+
+@available(*, deprecated)
 class AgentAPI {
     private static let API_COMPATIBILITY_DATE = "2024-04-17"
 
@@ -60,12 +80,8 @@ class AgentAPI {
 
     private static func urlSessionConfig() -> URLSessionConfiguration {
         let config = URLSessionConfiguration.default
-        let hostAppIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
-        let hostAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
-        let iosModel = UIDevice.current.model
-        let iosVersion = UIDevice.current.systemVersion
         config.httpAdditionalHeaders = [
-            "User-Agent": "Sierra-iOS-SDK (\(hostAppIdentifier)/\(hostAppVersion) \(iosModel)/\(iosVersion))",
+            "User-Agent": getUserAgent(isWebView: false),
             "Sierra-API-Compatibility-Date": API_COMPATIBILITY_DATE,
         ]
         return config
@@ -290,6 +306,7 @@ enum AgentChatError: LocalizedError {
     }
 }
 
+@available(*, deprecated)
 class AgentChatUpdateListener: NSObject, URLSessionDataDelegate {
     private let task: URLSessionDataTask
     private let onUpdate: (APIEvent) -> Void
