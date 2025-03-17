@@ -143,8 +143,8 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         self.options = options
 
         // The custom greeting was initially a UI-only concept and thus specified via AgentChatControllerOptions,
-        // but it now also affects the API. We copy it over to ConversationOptions so that it can be included in
-        // API requests.
+        // but it now also affects the API, so it's in ConversationOptions. Read it from both places
+        // so that old clients don't need to change anything.
         var conversationOptions = options.conversationOptions
         if !options.greetingMessage.isEmpty && conversationOptions?.customGreeting == nil {
             if conversationOptions == nil {
@@ -235,6 +235,24 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         }
     }
 
+    private func updateActionMenu() {
+        var menuItems: [UIMenuElement] = []
+        if options.canSaveTranscript {
+            menuItems.append(UIAction(title: options.saveTranscriptLabel, image: UIImage(systemName: "square.and.arrow.down.on.square")) { [weak self] _ in
+                Task {
+                    await self?.saveTranscript()
+                }
+            })
+        }
+        if menuItems.isEmpty {
+            navigationItem.rightBarButtonItem = nil
+        } else {
+            let menuButton = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), style: .plain, target: self, action: nil)
+            menuButton.menu = UIMenu(children: menuItems)
+            navigationItem.rightBarButtonItem = menuButton
+        }
+    }
+
     // MARK: - WKScriptMessageHandler
 
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -251,6 +269,8 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                             self.webView.scrollView.alpha = 1.0
                         })
                     }
+                case "onConversationIDAvailable":
+                    updateActionMenu()
                 case "onTransfer":
                     if let dataJSONStr = body["dataJSONStr"] as? String {
                        if let transfer = ConversationTransfer.fromJSON(dataJSONStr) {
@@ -261,6 +281,11 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     optionsConversationCallbacks?.onAgentMessageEnd()
                 case "onEndChat":
                     optionsConversationCallbacks?.onConversationEnded()
+                case "onPrint":
+                    if let url = body["url"] as? String,
+                        let formData = body["formData"] as? String {
+                        handlePrint(url: URL(string: url)!, formData: formData)
+                    }
                 default:
                     debugLog("Received unknown message type: \(type)")
                     break
@@ -335,11 +360,66 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         })
         present(alert, animated: true)
     }
+
+    // MARK: - Printing Support
+
+    private func handlePrint(url: URL, formData: String) {
+        Task {
+            do {
+                let pdfData = try await generatePDFData(url: url, formData: formData)
+                let pdfDataURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(self.options.transcriptFileName).pdf")
+                try pdfData.write(to: pdfDataURL)
+                let documentInteractionController = UIDocumentInteractionController(url: pdfDataURL)
+                documentInteractionController.delegate = self
+                documentInteractionController.presentPreview(animated: true)
+            } catch {
+                debugLog("Cannot save transcript, error: \(error)")
+                let alert = UIAlertController(title: nil, message: self.options.errorMessage, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                self.present(alert, animated: true)
+            }
+        }
+    }
+
+    func generatePDFData(url: URL, formData: String) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = formData.data(using: .utf8)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let generator = TranscriptPDFGenerator(request: request)
+        let pdfData = try await generator.generate()
+        return pdfData
+    }
 }
 
 class CustomWebView: WKWebView {
     override var inputAccessoryView: UIView? {
         return nil
+    }
+}
+
+extension AgentChatController: UIDocumentInteractionControllerDelegate {
+    private func saveTranscript() async {
+        let activityIndicator = UIActivityIndicatorView(style: .medium)
+        activityIndicator.color = .tintColor
+        let barButton = UIBarButtonItem(customView: activityIndicator)
+        let previousRightBarButtonItem = self.navigationItem.rightBarButtonItem
+        self.navigationItem.rightBarButtonItem = barButton
+        activityIndicator.startAnimating()
+        defer {
+            activityIndicator.stopAnimating()
+            self.navigationItem.rightBarButtonItem = previousRightBarButtonItem
+        }
+
+        do {
+            try await webView.evaluateJavaScript("sierraMobile.printTranscript()", completionHandler: nil)
+        } catch {
+            debugLog("Cannot save transcript, error: \(error)")
+        }
+    }
+
+    public func documentInteractionControllerViewControllerForPreview(_ controller: UIDocumentInteractionController) -> UIViewController {
+        return self
     }
 }
 
@@ -491,12 +571,12 @@ extension DeprecatedAgentChatController: UIDocumentInteractionControllerDelegate
         let activityIndicator = UIActivityIndicatorView(style: .medium)
         activityIndicator.color = .tintColor
         let barButton = UIBarButtonItem(customView: activityIndicator)
-        let previouRightBarButtonItem = self.navigationItem.rightBarButtonItem
+        let previousRightBarButtonItem = self.navigationItem.rightBarButtonItem
         self.navigationItem.rightBarButtonItem = barButton
         activityIndicator.startAnimating()
         defer {
             activityIndicator.stopAnimating()
-            self.navigationItem.rightBarButtonItem = previouRightBarButtonItem
+            self.navigationItem.rightBarButtonItem = previousRightBarButtonItem
         }
 
         do {

@@ -23,9 +23,6 @@ class TranscriptPDFGenerator: NSObject, WKNavigationDelegate {
             self.continuation = continuation
             self.webView.load(request)
         }
-
-        let config = WKPDFConfiguration()
-        config.rect = CGRect(origin: .zero, size: webView.scrollView.contentSize)
         return try await webView.pdf()
     }
 
