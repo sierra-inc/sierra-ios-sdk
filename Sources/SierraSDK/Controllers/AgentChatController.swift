@@ -133,6 +133,7 @@ extension AgentChatControllerOptions {
 
 public class AgentChatController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler {
     private var webView: CustomWebView!
+    private var webViewLoaded = false
     private let agent: Agent
     private var options: AgentChatControllerOptions
     private var loadingSpinner: UIActivityIndicatorView?
@@ -192,7 +193,6 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         loadingSpinner.color = options.chatStyle.colors.titleBarText
         loadingSpinner.translatesAutoresizingMaskIntoConstraints = false
         loadingSpinner.hidesWhenStopped = true
-        loadingSpinner.startAnimating()
 
         webView.addSubview(loadingSpinner)
         NSLayoutConstraint.activate([
@@ -209,7 +209,15 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
     public override func loadView() {
         self.view = webView
-        loadChatURL()
+    }
+
+    public override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Try again to load if we didn't get successfuly do it the first time we were shown.
+        if !webViewLoaded {
+            self.loadingSpinner?.startAnimating()
+            loadChatURL()
+        }
     }
 
     private func loadChatURL() {
@@ -220,6 +228,9 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
         // Turn config and options into query parameters that mobile.tsx expects
         var queryItems = self.options.toQueryItems()
+        if let target = self.agent.config.target, !target.isEmpty {
+            queryItems.append(URLQueryItem(name: "target", value: target))
+        }
 
         // Always hideTitleBar for iOS
         queryItems.append(URLQueryItem(name: "hideTitleBar", value: "true"))
@@ -264,6 +275,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                 case "onOpen":
                     // Fade in only the content with a smooth animation
                     DispatchQueue.main.async {
+                        self.webViewLoaded = true
                         self.loadingSpinner?.stopAnimating()
                         UIView.animate(withDuration: 0.3, animations: {
                             self.webView.scrollView.alpha = 1.0

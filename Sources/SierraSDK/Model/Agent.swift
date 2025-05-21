@@ -5,10 +5,12 @@ import UIKit
 
 public struct AgentConfig {
     public let token: String
+    public let target: String?
     public var apiHost: AgentAPIHost = .prod
 
-    public init(token: String) {
+    public init(token: String, target: String? = nil) {
         self.token = token
+        self.target = target
     }
 
     var url: String {
