@@ -53,8 +53,17 @@ public struct AgentChatControllerOptions {
     /// If set to true user will be able to save a conversation transcript via a menu item.
     public var canSaveTranscript: Bool = false;
 
+    /// If set to true user will be able to end a conversation via a menu item.
+    public var canEndConversation: Bool = false;
+
+    /// If set to true user will be able to start a new conversation via a menu item.
+    public var canStartNewChat: Bool = false;
+
     /// Menu label for the conversation transcript saving item.
     public var saveTranscriptLabel: String = "Save Transcript"
+
+    /// Menu label for the conversation ending item.
+    public var endConversationLabel: String = "End Conversation"
 
     /// File name for the generated transcript file.
     public var transcriptFileName: String = "Transcript"
@@ -124,6 +133,14 @@ extension AgentChatControllerOptions {
             }
         }
 
+        if canEndConversation {
+            queryItems.append(URLQueryItem(name: "canEndConversation", value: "true"))
+        }
+
+        if canStartNewChat {
+            queryItems.append(URLQueryItem(name: "canStartNewChat", value: "true"))
+        }
+
         if canSaveTranscript {
             queryItems.append(URLQueryItem(name: "canPrintTranscript", value: "true"))
         }
@@ -138,6 +155,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private var options: AgentChatControllerOptions
     private var loadingSpinner: UIActivityIndicatorView?
     private weak var optionsConversationCallbacks: ConversationCallbacks?
+    private var requestEndConversationEnabled = false
 
     public init(agent: Agent, options: AgentChatControllerOptions) {
         self.agent = agent
@@ -248,6 +266,17 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
     private func updateActionMenu() {
         var menuItems: [UIMenuElement] = []
+        
+        if options.canEndConversation {
+            let endConversationAction = UIAction(title: options.endConversationLabel, image: UIImage(systemName: "xmark.circle")) { [weak self] _ in
+                Task {
+                    await self?.endConversation()
+                }
+            }
+            endConversationAction.attributes = requestEndConversationEnabled ? [] : [.disabled]
+            menuItems.append(endConversationAction)
+        }
+        
         if options.canSaveTranscript {
             menuItems.append(UIAction(title: options.saveTranscriptLabel, image: UIImage(systemName: "square.and.arrow.down.on.square")) { [weak self] _ in
                 Task {
@@ -291,6 +320,12 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     }
                 case "onAgentMessageEnd":
                     optionsConversationCallbacks?.onAgentMessageEnd()
+                case "onRequestEndConversationEnabledChange":
+                    if let enabled = body["enabled"] as? Bool {
+                        requestEndConversationEnabled = enabled
+                        updateActionMenu()
+                        optionsConversationCallbacks?.onRequestEndConversationEnabledChange(enabled)
+                    }
                 case "onEndChat":
                     optionsConversationCallbacks?.onConversationEnded()
                 case "onPrint":
@@ -427,6 +462,15 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
             try await webView.evaluateJavaScript("sierraMobile.printTranscript()", completionHandler: nil)
         } catch {
             debugLog("Cannot save transcript, error: \(error)")
+        }
+    }
+
+    private func endConversation() async {
+        debugLog("Ending conversation")
+        do {
+            try await webView.evaluateJavaScript("sierraMobile.endConversation()", completionHandler: nil)
+        } catch {
+            debugLog("Cannot end conversation, error: \(error)")
         }
     }
 

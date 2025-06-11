@@ -29,6 +29,8 @@ public protocol ConversationCallbacks: AnyObject {
     /// Callback invoked when the virtual agent finishes replying to the user.
     /// Not invoked for the greeting message.
     func onAgentMessageEnd()
+    /// Callback invoked when the ability to end the conversation changes.
+    func onRequestEndConversationEnabledChange(_ enabled: Bool)
     /// Callback invoked when the conversation ends.
     func onConversationEnded()
 }
@@ -38,6 +40,7 @@ public protocol ConversationCallbacks: AnyObject {
 public extension ConversationCallbacks {
     func onConversationTransfer(transfer: ConversationTransfer) {}
     func onAgentMessageEnd() {}
+    func onRequestEndConversationEnabledChange(_ enabled: Bool) {}
     func onConversationEnded() {}
 }
 
