@@ -20,6 +20,7 @@ public struct AgentConfig {
 
 public enum AgentAPIHost: String {
     case prod = "prod"
+    case eu = "eu"
     case staging = "staging"
     case local = "local"
 
@@ -27,6 +28,8 @@ public enum AgentAPIHost: String {
         switch self {
         case .prod:
             return "https://api.sierra.chat"
+        case .eu:
+            return "https://eu.api.sierra.chat"
         case .staging:
             return "https://api-staging.sierra.chat"
         case .local:
@@ -38,6 +41,8 @@ public enum AgentAPIHost: String {
         switch self {
         case .prod:
             return "https://sierra.chat"
+        case .eu:
+            return "https://eu.sierra.chat"
         case .staging:
             return "https://staging.sierra.chat"
         case .local:
