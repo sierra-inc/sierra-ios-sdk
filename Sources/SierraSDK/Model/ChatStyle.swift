@@ -4,28 +4,46 @@ import UIKit
 
 public struct ChatStyle {
     public let colors: ChatStyleColors
+    public let typography: ChatStyleTypography?
 
     @available(*, deprecated)
     public let layout: ChatStyleLayout
 
-    public init(colors: ChatStyleColors) {
+    public init(colors: ChatStyleColors, typography: ChatStyleTypography? = nil) {
         self.colors = colors
+        self.typography = typography
         self.layout = DEFAULT_CHAT_STYLE_LAYOUT
     }
 
     @available(*, deprecated)
     public init(colors: ChatStyleColors, layout: ChatStyleLayout) {
         self.colors = colors
+        self.typography = nil
         self.layout = layout
     }
 }
 
 public let DEFAULT_CHAT_STYLE = ChatStyle(colors: DEFAULT_CHAT_STYLE_COLORS, layout: DEFAULT_CHAT_STYLE_LAYOUT)
 
+public struct ChatStyleTypography {
+    /// The font family, a comma-separated list of font names.
+    /// Note: Only built-in system fonts are supported. Custom fonts loaded by the app are not available.
+    public let fontFamily: String?
+
+    /// The font size, in pixels.
+    public let fontSize: Int?
+
+    public init(fontFamily: String? = nil,
+                fontSize: Int? = nil) {
+        self.fontFamily = fontFamily
+        self.fontSize = fontSize
+    }
+}
+
 public struct ChatStyleColors {
     /// The background color for the chat view.
     public let backgroundColor: UIColor
-    
+
     /// The color of the user input text and default color for assistant messages.
     public let text: UIColor?
 
@@ -50,6 +68,9 @@ public struct ChatStyleColors {
     /// The color of the text in chat bubbles for messages from the user.
     public let userBubbleText: UIColor
 
+    /// The color of the "Start new chat" button text.
+    public let newChatButton: UIColor?
+
     /// The color of the optional disclosure text that appears before any chat messages.
     @available(*, deprecated)
     public let disclosureText: UIColor
@@ -61,7 +82,7 @@ public struct ChatStyleColors {
     /// The color that the waiting message is displayed in
     @available(*, deprecated)
     public let statusText: UIColor
-    
+
     /// Override the tint color of the chat view (it will normally inherit the application's)
     @available(*, deprecated)
     public let tintColor: UIColor?
@@ -73,6 +94,7 @@ public struct ChatStyleColors {
                 assistantBubbleText: UIColor = .label,
                 userBubble: UIColor = .systemBlue,
                 userBubbleText: UIColor = .white,
+                newChatButton: UIColor? = nil,
                 disclosureText: UIColor = .secondaryLabel,
                 errorText: UIColor = .systemRed,
                 humanAgentTransferWaitingText: UIColor = .secondaryLabel,
@@ -86,6 +108,7 @@ public struct ChatStyleColors {
         self.assistantBubbleText = assistantBubbleText
         self.userBubble = userBubble
         self.userBubbleText = userBubbleText
+        self.newChatButton = newChatButton
         self.disclosureText = disclosureText
         self.errorText = errorText
         self.statusText = humanAgentTransferWaitingText
@@ -159,7 +182,7 @@ extension UIColor {
         guard self.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
             return nil
         }
-        
+
         // Clamp values to be below 1.0
         red = min(red, 1.0)
         green = min(green, 1.0)
@@ -203,15 +226,40 @@ extension ChatStyleColors {
         if let border = border {
             json["border"] = border.toHex()
         }
+        if let newChatButton = newChatButton {
+            json["newChatButton"] = newChatButton.toHex()
+        }
+        return json
+    }
+}
+
+extension ChatStyleTypography {
+    func toJSON() -> [String: Any?] {
+        var json: [String: Any?] = [:]
+        if let fontFamily = fontFamily {
+            json["fontFamily"] = fontFamily
+        }
+        if let fontSize = fontSize {
+            json["fontSize"] = fontSize
+            // Set all responsive font sizes
+            json["fontSize900"] = fontSize
+            json["fontSize750"] = fontSize
+            json["fontSize500"] = fontSize
+        }
         return json
     }
 }
 
 extension ChatStyle {
     func toJSON() -> [String: Any] {
-        return [
+        var json: [String: Any] = [
             "colors": colors.toJSON(),
         ]
+        // Match the ChatStyle type from ui/chat/chat.tsx - serialize as "type"
+        if let typography = typography {
+            json["type"] = typography.toJSON()
+        }
+        return json
     }
 
     func toJSONString() -> String {
@@ -221,7 +269,7 @@ extension ChatStyle {
                 return jsonString
             } else {
                 debugLog("Error: Unable to convert JSON data to string.")
-            } 
+            }
         } catch {
             debugLog("Error serializing object to JSON: \(error)")
         }
