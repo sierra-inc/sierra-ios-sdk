@@ -148,7 +148,7 @@ extension AgentChatControllerOptions {
     }
 }
 
-public class AgentChatController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler {
+public class AgentChatController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
     private var webView: CustomWebView!
     private var webViewLoaded = false
     private let agent: Agent
@@ -199,6 +199,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
         // Add the script message handler
         contentController.add(self, name: "chatHandler")
+        contentController.addScriptMessageHandler(self, contentWorld: .page, name: "chatReplyHandler")
 
         webView = CustomWebView(frame: .zero, configuration: configuration)
         webView.backgroundColor = options.chatStyle.colors.backgroundColor
@@ -314,9 +315,9 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     updateActionMenu()
                 case "onTransfer":
                     if let dataJSONStr = body["dataJSONStr"] as? String {
-                       if let transfer = ConversationTransfer.fromJSON(dataJSONStr) {
-                           optionsConversationCallbacks?.onConversationTransfer(transfer: transfer)
-                       }
+                        if let transfer = ConversationTransfer.fromJSON(dataJSONStr) {
+                            optionsConversationCallbacks?.onConversationTransfer(transfer: transfer)
+                        }
                     }
                 case "onAgentMessageEnd":
                     optionsConversationCallbacks?.onAgentMessageEnd()
@@ -330,7 +331,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     optionsConversationCallbacks?.onConversationEnded()
                 case "onPrint":
                     if let url = body["url"] as? String,
-                        let formData = body["formData"] as? String {
+                       let formData = body["formData"] as? String {
                         handlePrint(url: URL(string: url)!, formData: formData)
                     }
                 default:
@@ -338,12 +339,49 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     break
                 }
             }
+        } else {
+            debugLog("Received unknown message: \(message.name)")
         }
+    }
 
+
+    // MARK: - WKScriptMessageHandlerWithReply
+
+    public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        guard let body = message.body as? [String: Any] else { return }
+
+        if message.name == "chatReplyHandler" {
+            if let type = body["type"] as? String {
+                switch type {
+                case "onSecretExpiry":
+                    if let secretName = body["secretName"] as? String {
+                        if let optionsConversationCallbacks {
+                            optionsConversationCallbacks.onSecretExpiry(secretName: secretName) { result in
+                                switch result {
+                                case .success(let value): replyHandler(value, nil)
+                                case .failure(let error): replyHandler(nil, error.localizedDescription)
+                                }
+                            }
+                        } else {
+                            replyHandler(nil, nil)
+                        }
+                    } else {
+                        replyHandler(nil, "secretName is missing")
+                    }
+                default:
+                    debugLog("Received unknown message type: \(type)")
+                    replyHandler(nil, "Unknown message type: \(type)")
+                    break
+                }
+            }
+        } else {
+            debugLog("Received unknown reply message: \(message.name)")
+        }
     }
 
     deinit {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "chatHandler")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "chatReplyHandler", contentWorld: .page)
     }
 
     // MARK: - WKNavigationDelegate Methods

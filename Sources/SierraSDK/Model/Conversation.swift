@@ -33,6 +33,11 @@ public protocol ConversationCallbacks: AnyObject {
     func onRequestEndConversationEnabledChange(_ enabled: Bool)
     /// Callback invoked when the conversation ends.
     func onConversationEnded()
+    /// Callback invoked when a secret needs needs to be refreshed. Reply handler should be invoked with one of:
+    /// - a new value for the secret
+    /// - nil if the secret cannot be provided due to a known condition (e.g. the user has signed out)
+    /// - an error if the secret cannot be fetched right now, but the request should be retried.
+    func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void)
 }
 
 // Default no-op implementations of ConversationCallbacks, so that clients can
@@ -42,6 +47,9 @@ public extension ConversationCallbacks {
     func onAgentMessageEnd() {}
     func onRequestEndConversationEnabledChange(_ enabled: Bool) {}
     func onConversationEnded() {}
+    func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void) {
+        replyHandler(.success(nil))
+    }
 }
 
 public struct ConversationTransfer {
