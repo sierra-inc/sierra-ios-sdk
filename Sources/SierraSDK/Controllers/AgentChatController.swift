@@ -512,6 +512,26 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
         }
     }
 
+    /// Send user attachments without text message (equivalent to web SDK's sendUserAttachment)
+    /// - Parameter attachments: Array of UserAttachment objects to send
+    /// - Throws: AgentChatError.invalidAttachments if attachments are invalid
+    public func sendUserAttachment(_ attachments: [UserAttachment]) async throws {
+        do {
+            _ = try await webView.callAsyncJavaScript(
+                "window.sierraMobile.sendUserAttachment(attachments)",
+                // Convert to the RawMessageAttachment type that the web view expects.
+                arguments: ["attachments": attachments.map { [
+                    "type": $0.type.rawValue,
+                    "data": $0.data
+                ] }],
+                in: nil,
+                in: .page
+            )
+        } catch {
+            throw AgentChatError.invalidAttachments("Failed to send attachments: \(error.localizedDescription)")
+        }
+    }
+
     public func documentInteractionControllerViewControllerForPreview(_ controller: UIDocumentInteractionController) -> UIViewController {
         return self
     }
