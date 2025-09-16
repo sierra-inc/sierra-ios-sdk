@@ -27,16 +27,68 @@ public let DEFAULT_CHAT_STYLE = ChatStyle(colors: DEFAULT_CHAT_STYLE_COLORS, lay
 
 public struct ChatStyleTypography {
     /// The font family, a comma-separated list of font names.
-    /// Note: Only built-in system fonts are supported. Custom fonts loaded by the app are not available.
+    /// Note: Data for custom fonts must be provided in the `customFonts` property.
     public let fontFamily: String?
 
     /// The font size, in pixels.
     public let fontSize: Int?
 
+    /// Custom fonts that are included in the app bundle.
+    public let customFonts: [CustomFont]?
+
     public init(fontFamily: String? = nil,
-                fontSize: Int? = nil) {
+                fontSize: Int? = nil,
+                customFonts: [CustomFont]? = nil) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
+        self.customFonts = customFonts
+    }
+}
+
+public struct CustomFont {
+    /// The font family name to use. Should match the name given in the
+    /// `fontFamily` property of the `ChatStyleTypography` struct.
+    public let fontFamily: String
+    /// The font type (ttf, otf, woff, woff2)
+    public let fontType: FontType
+    /// The font weight (normal, bold, 100, 400, 700)
+    public let fontWeight: String
+    /// The font style (normal, italic, oblique)
+    public let fontStyle: String
+    /// The URL of the font resource to load. Usually obtained from the app bundle.
+    public let dataURL: URL
+
+    public init(fontFamily: String,
+                fontType: FontType,
+                fontWeight: String = "normal",
+                fontStyle: String = "normal",
+                dataURL: URL) {
+        self.fontFamily = fontFamily
+        self.fontType = fontType
+        self.fontWeight = fontWeight
+        self.fontStyle = fontStyle
+        self.dataURL = dataURL
+    }
+}
+
+public enum FontType: String {
+    case ttf = "ttf"
+    case otf = "otf"
+    case woff = "woff"
+    case woff2 = "woff2"
+
+    /// The MIME type for this font format
+    var mimeType: String {
+        switch self {
+        case .ttf:
+            return "font/ttf"
+        case .otf:
+            return "font/otf"
+        case .woff:
+            return "font/woff"
+        case .woff2:
+            return "font/woff2"
+        }
     }
 }
 

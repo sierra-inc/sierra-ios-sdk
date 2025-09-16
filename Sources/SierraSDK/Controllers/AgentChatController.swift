@@ -224,6 +224,12 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         webView.customUserAgent = getUserAgent(isWebView: true)
         webView.scrollView.backgroundColor = options.chatStyle.colors.backgroundColor
         webView.scrollView.keyboardDismissMode = .interactive
+
+#if targetEnvironment(simulator)
+        if #available(iOS 16.4, *) {
+            webView.isInspectable = true
+        }
+#endif
     }
 
     public override func loadView() {
@@ -267,7 +273,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
     private func updateActionMenu() {
         var menuItems: [UIMenuElement] = []
-        
+
         if options.canEndConversation {
             let endConversationAction = UIAction(title: options.endConversationLabel, image: UIImage(systemName: "xmark.circle")) { [weak self] _ in
                 Task {
@@ -277,7 +283,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
             endConversationAction.attributes = requestEndConversationEnabled ? [] : [.disabled]
             menuItems.append(endConversationAction)
         }
-        
+
         if options.canSaveTranscript {
             menuItems.append(UIAction(title: options.saveTranscriptLabel, image: UIImage(systemName: "square.and.arrow.down.on.square")) { [weak self] _ in
                 Task {
@@ -307,6 +313,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     DispatchQueue.main.async {
                         self.webViewLoaded = true
                         self.loadingSpinner?.stopAnimating()
+
                         UIView.animate(withDuration: 0.3, animations: {
                             self.webView.scrollView.alpha = 1.0
                         })
@@ -368,6 +375,33 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     } else {
                         replyHandler(nil, "secretName is missing")
                     }
+                case "getCustomFonts":
+                    guard let customFonts = options.chatStyle.typography?.customFonts else {
+                        // No custom fonts configured
+                        replyHandler([], nil)
+                        return
+                    }
+                    var fontsArray: [[String: String]] = []
+
+                    for customFont in customFonts {
+                        do {
+                            let fontData = try Data(contentsOf: customFont.dataURL)
+                            let base64String = fontData.base64EncodedString()
+                            let dataURL = "data:\(customFont.fontType.mimeType);base64,\(base64String)"
+
+                            // Should match the CustomFont type from mobile.tsx.
+                            fontsArray.append([
+                                "fontFamily": customFont.fontFamily,
+                                "fontData": dataURL,
+                                "fontWeight": customFont.fontWeight,
+                                "fontStyle": customFont.fontStyle
+                            ])
+                        } catch {
+                            debugLog("Failed to load custom font '\(customFont.fontFamily)' from URL: \(customFont.dataURL). Error: \(error)")
+                        }
+                    }
+
+                    replyHandler(fontsArray, nil)
                 default:
                     debugLog("Received unknown message type: \(type)")
                     replyHandler(nil, "Unknown message type: \(type)")
