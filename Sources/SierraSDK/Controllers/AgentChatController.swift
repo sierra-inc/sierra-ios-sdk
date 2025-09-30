@@ -291,9 +291,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                 }
             })
         }
-        if menuItems.isEmpty {
-            navigationItem.rightBarButtonItem = nil
-        } else {
+        if !menuItems.isEmpty {
             let menuButton = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), style: .plain, target: self, action: nil)
             menuButton.menu = UIMenu(children: menuItems)
             navigationItem.rightBarButtonItem = menuButton
@@ -704,9 +702,7 @@ public class DeprecatedAgentChatController : UIViewController, ConversationDeleg
             })
         }
 
-        if menuItems.isEmpty {
-            navigationItem.rightBarButtonItem = nil
-        } else {
+        if !menuItems.isEmpty {
             let menuButton = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), style: .plain, target: self, action: nil)
             menuButton.menu = UIMenu(children: menuItems)
             navigationItem.rightBarButtonItem = menuButton
