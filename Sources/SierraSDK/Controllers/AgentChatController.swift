@@ -68,6 +68,9 @@ public struct AgentChatControllerOptions {
     /// File name for the generated transcript file.
     public var transcriptFileName: String = "Transcript"
 
+    /// Message that will be automatically sent from the user when the conversation starts.
+    public var initialUserMessage: String?
+
     /// Customization of the Conversation that the controller will create.
     public var conversationOptions: ConversationOptions?
 
@@ -144,6 +147,11 @@ extension AgentChatControllerOptions {
         if canSaveTranscript {
             queryItems.append(URLQueryItem(name: "canPrintTranscript", value: "true"))
         }
+
+        if let initialUserMessage = initialUserMessage, !initialUserMessage.isEmpty {
+            queryItems.append(URLQueryItem(name: "initialUserMessage", value: initialUserMessage))
+        }
+
         return queryItems
     }
 }
