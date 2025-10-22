@@ -7,39 +7,56 @@ public struct AgentChatControllerOptions {
     /// Name for this virtual agent, displayed as the navigation item title.
     public let name: String
 
-    /// Message shown from the agent when starting the conversation.
+    /// Message shown from the agent when starting the conversation. Overridden by server-configured
+    /// greeting message if useConfiguredChatStrings is true.
     public var greetingMessage: String = "How can I help you today?"
 
-    /// Secondary text to display above the agent message at the start of a conversation.
+    /// Secondary text to display above the agent message at the start of a conversation. Overridden
+    /// by server-configured disclosure if useConfiguredChatStrings is true.
     public var disclosure: String?
 
-    /// Message shown when an error is encountered during the conversation unless the
-    /// server provided an alternate message to display.
+    /// Message shown when an error is encountered during the conversation unless the server
+    /// provided an alternate message to display. Overridden by server-configured error message if
+    /// useConfiguredChatStrings is true.
     public var errorMessage: String = "Oops, an error was encountered! Please try again."
 
-    /// Message shown when waiting for a human agent to join the conversation.
+    // Message shown when a conversation was ended due to inactivity. Overridden by
+    // server-configured inactivity message if useConfiguredChatStrings is true.
+    public var inactivityMessage: String?
+
+    /// Message shown when waiting for a human agent to join the conversation. Overridden by
+    /// server-configured human agent transfer waiting message if useConfiguredChatStrings is true.
     public var humanAgentTransferWaitingMessage: String = "Waiting for agent…"
 
-    /// Message shown when waiting for a human agent to join the conversation,
-    /// and the queue size is known. "{QUEUE_SIZE}" will be replaced with the
-    /// size of the queue.
+    /// Message shown when waiting for a human agent to join the conversation, and the queue size is
+    /// known. "{QUEUE_SIZE}" will be replaced with the size of the queue. Overridden by
+    /// server-configured human agent transfer queue size message if useConfiguredChatStrings is
+    /// true.
     public var humanAgentTransferQueueSizeMessage: String = "Queue Size: {QUEUE_SIZE}"
 
-    /// Message shown when waiting for a human agent to join the conversation,
-    /// and the user is next in line.
+    /// Message shown when waiting for a human agent to join the conversation, and the user is next
+    /// in line. Overridden by server-configured human agent transfer queue next message if
+    /// useConfiguredChatStrings is true.
     public var humanAgentTransferQueueNextMessage: String = "You are next in line"
 
-    /// Message shown when a human agent has joined the conversation.
+    /// Message shown when a human agent has joined the conversation. Overridden by
+    /// server-configured human agent transfer joined message if useConfiguredChatStrings is true.
     public var humanAgentTransferJoinedMessage: String = "Agent connected"
 
-    /// Message shown when a human agent has left the conversation.
+    /// Message shown when a human agent has left the conversation. Overridden by server-configured
+    /// human agent transfer left message if useConfiguredChatStrings is true.
     public var humanAgentTransferLeftMessage: String = "Agent disconnected"
 
-    /// Placeholder value displayed in the chat input when it is empty.
+    /// Placeholder value displayed in the chat input when it is empty. Overridden by
+    /// server-configured input placeholder if useConfiguredChatStrings is true.
     public var inputPlaceholder: String = "Message…"
 
-    /// Shown in place of the chat input when the conversation has ended.
+    /// Shown in place of the chat input when the conversation has ended. Overridden by
+    /// server-configured conversation ended message if useConfiguredChatStrings is true.
     public var conversationEndedMessage: String = "Chat Ended";
+
+    /// If true, prefer server-configured chat strings over the ones provided in SDK options.
+    public var useConfiguredChatStrings: Bool = false
 
     /// Message shown when there is no internet connection.
     public var noInternetConnectionErrorMessage: String = "No internet connection. Please check your connection and try again."
@@ -92,15 +109,16 @@ extension AgentChatControllerOptions {
         // Should match the Brand type from bots/useChat.tsx
         let brand: [String: Any] = [
             "botName": name,
-            "errorMessage": errorMessage,
             "greetingMessage": greetingMessage,
             "disclosure": disclosure ?? "",
-            "inputPlaceholder": inputPlaceholder,
+            "errorMessage": errorMessage,
+            "inactivityMessage": inactivityMessage ?? "",
             "agentTransferWaitingMessage": humanAgentTransferWaitingMessage,
             "agentTransferQueueSizeMessage": humanAgentTransferQueueSizeMessage,
             "agentTransferQueueNextMessage": humanAgentTransferQueueNextMessage,
             "agentJoinedMessage": humanAgentTransferJoinedMessage,
             "agentLeftMessage": humanAgentTransferLeftMessage,
+            "inputPlaceholder": inputPlaceholder,
             "conversationEndedMessage": conversationEndedMessage,
             "chatStyle": chatStyle.toJSONString(),
         ]
@@ -152,6 +170,10 @@ extension AgentChatControllerOptions {
             queryItems.append(URLQueryItem(name: "initialUserMessage", value: initialUserMessage))
         }
 
+        if useConfiguredChatStrings {
+            queryItems.append(URLQueryItem(name: "useConfiguredChatStrings", value: "true"))
+        }
+
         return queryItems
     }
 }
@@ -164,6 +186,8 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private var loadingSpinner: UIActivityIndicatorView?
     private weak var optionsConversationCallbacks: ConversationCallbacks?
     private var requestEndConversationEnabled = false
+    private var isPageVisible = false
+    private var lifecycleObservers: [NSObjectProtocol] = []
 
     public init(agent: Agent, options: AgentChatControllerOptions) {
         self.agent = agent
@@ -241,16 +265,48 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     public override func loadView() {
-        self.view = webView
+        // Create a container view to hold the webview with keyboard layout guide constraints
+        let containerView = UIView()
+        containerView.backgroundColor = options.chatStyle.colors.backgroundColor
+
+        // Add webview to container
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(webView)
+
+        // Set up constraints using keyboard layout guide
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: containerView.safeAreaLayoutGuide.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: containerView.keyboardLayoutGuide.topAnchor)
+        ])
+
+        self.view = containerView
     }
 
     public override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        // Try again to load if we didn't get successfuly do it the first time we were shown.
+        // Try again to load if we didn't get successfully do it the first time we were shown.
         if !webViewLoaded {
             self.loadingSpinner?.startAnimating()
             loadChatURL()
         }
+    }
+
+    public override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        addLifecycleObservers()
+        dispatchAppStatusChange(true)
+    }
+
+    public override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        dispatchAppStatusChange(false)
+    }
+
+    public override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        removeLifecycleObservers()
     }
 
     private func loadChatURL() {
@@ -319,6 +375,9 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     DispatchQueue.main.async {
                         self.webViewLoaded = true
                         self.loadingSpinner?.stopAnimating()
+                        // If we became visible before the web content finished loading,
+                        // ensure that appstatuschange is dispatched now.
+                        self.dispatchAppStatusChange(true)
 
                         UIView.animate(withDuration: 0.3, animations: {
                             self.webView.scrollView.alpha = 1.0
@@ -420,6 +479,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     deinit {
+        removeLifecycleObservers()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "chatHandler")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "chatReplyHandler", contentWorld: .page)
     }
@@ -484,6 +544,53 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
             self?.loadingSpinner?.startAnimating()
         })
         present(alert, animated: true)
+    }
+
+    private func addLifecycleObservers() {
+        guard lifecycleObservers.isEmpty else { return }
+        let nc = NotificationCenter.default
+        if let windowScene = view.window?.windowScene {
+            let sceneWillEnterForeground = nc.addObserver(forName: UIScene.willEnterForegroundNotification, object: windowScene, queue: .main) { [weak self] _ in
+                self?.dispatchAppStatusChange(true)
+            }
+            let sceneDidEnterBackground = nc.addObserver(forName: UIScene.didEnterBackgroundNotification, object: windowScene, queue: .main) { [weak self] _ in
+                self?.dispatchAppStatusChange(false)
+            }
+            lifecycleObservers.append(contentsOf: [sceneWillEnterForeground, sceneDidEnterBackground])
+        }
+        let willResign = nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.dispatchAppStatusChange(false)
+        }
+        let didEnterBg = nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.dispatchAppStatusChange(false)
+        }
+        let didBecome = nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.dispatchAppStatusChange(true)
+        }
+        lifecycleObservers.append(contentsOf: [willResign, didEnterBg, didBecome])
+    }
+
+    private func removeLifecycleObservers() {
+        if !lifecycleObservers.isEmpty {
+            lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
+            lifecycleObservers.removeAll()
+        }
+    }
+
+    private func dispatchAppStatusChange(_ isVisible: Bool) {
+        guard view.window != nil else { return }
+        guard webViewLoaded else { return }
+        if isVisible {
+            if isPageVisible { return }
+            isPageVisible = true
+        } else {
+            if !isPageVisible { return }
+            isPageVisible = false
+        }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let status = isVisible ? "FOREGROUNDED" : "BACKGROUNDED"
+        let js = "window.dispatchEvent(new CustomEvent('appstatuschange', { detail: { status: '" + status + "', localTimestampMs: " + String(nowMs) + " } }))"
+        webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
     // MARK: - Printing Support
