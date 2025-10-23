@@ -385,6 +385,9 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     }
                 case "onConversationIDAvailable":
                     updateActionMenu()
+                    if let unprefixedConversationID = body["unprefixedConversationID"] as? String {
+                        optionsConversationCallbacks?.onConversationStart(conversationID: unprefixedConversationID)
+                    }
                 case "onTransfer":
                     if let dataJSONStr = body["dataJSONStr"] as? String {
                         if let transfer = ConversationTransfer.fromJSON(dataJSONStr) {

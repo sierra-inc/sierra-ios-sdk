@@ -26,6 +26,8 @@ public protocol ConversationCallbacks: AnyObject {
     /// Callback invoked when the user chatting with the virtual agent has requested a transfer to an
     /// external agent.
     func onConversationTransfer(transfer: ConversationTransfer)
+    /// Callback invoked when a conversation starts.
+    func onConversationStart(conversationID: String)
     /// Callback invoked when the virtual agent finishes replying to the user.
     /// Not invoked for the greeting message.
     func onAgentMessageEnd()
@@ -44,6 +46,7 @@ public protocol ConversationCallbacks: AnyObject {
 // implement only the subset that they care about.
 public extension ConversationCallbacks {
     func onConversationTransfer(transfer: ConversationTransfer) {}
+    func onConversationStart(conversationID: String) {}
     func onAgentMessageEnd() {}
     func onRequestEndConversationEnabledChange(_ enabled: Bool) {}
     func onConversationEnded() {}
