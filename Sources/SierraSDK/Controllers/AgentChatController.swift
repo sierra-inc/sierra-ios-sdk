@@ -653,15 +653,6 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
         }
     }
 
-    private func endConversation() async {
-        debugLog("Ending conversation")
-        do {
-            try await webView.evaluateJavaScript("sierraMobile.endConversation()", completionHandler: nil)
-        } catch {
-            debugLog("Cannot end conversation, error: \(error)")
-        }
-    }
-
     /// Send user attachments without text message (equivalent to web SDK's sendUserAttachment)
     /// - Parameter attachments: Array of UserAttachment objects to send
     /// - Throws: AgentChatError.invalidAttachments if attachments are invalid
@@ -679,6 +670,17 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
             )
         } catch {
             throw AgentChatError.invalidAttachments("Failed to send attachments: \(error.localizedDescription)")
+        }
+    }
+
+    /// End the current conversation programmatically
+    /// This is the public API that customers can call themselves.
+    public func endConversation() async {
+        debugLog("Ending conversation")
+        do {
+            try await webView.evaluateJavaScript("sierraMobile.endConversation()", completionHandler: nil)
+        } catch {
+            debugLog("Cannot end conversation, error: \(error)")
         }
     }
 
