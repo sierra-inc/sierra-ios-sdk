@@ -73,7 +73,7 @@ public struct AgentChatControllerOptions {
     /// If set to true user will be able to end a conversation via a menu item.
     public var canEndConversation: Bool = false;
 
-    /// If set to true user will be able to start a new conversation via a menu item.
+    /// If set to true user will be able to start a new conversation via a button in the chat UI.
     public var canStartNewChat: Bool = false;
 
     /// Menu label for the conversation transcript saving item.
@@ -81,6 +81,9 @@ public struct AgentChatControllerOptions {
 
     /// Menu label for the conversation ending item.
     public var endConversationLabel: String = "End Conversation"
+
+    /// Label for the new chat button.
+    public var newChatButtonLabel: String = "Start new chat"
 
     /// File name for the generated transcript file.
     public var transcriptFileName: String = "Transcript"
@@ -110,7 +113,6 @@ extension AgentChatControllerOptions {
         let brand: [String: Any] = [
             "botName": name,
             "greetingMessage": greetingMessage,
-            "disclosure": disclosure ?? "",
             "errorMessage": errorMessage,
             "inactivityMessage": inactivityMessage ?? "",
             "agentTransferWaitingMessage": humanAgentTransferWaitingMessage,
@@ -118,8 +120,6 @@ extension AgentChatControllerOptions {
             "agentTransferQueueNextMessage": humanAgentTransferQueueNextMessage,
             "agentJoinedMessage": humanAgentTransferJoinedMessage,
             "agentLeftMessage": humanAgentTransferLeftMessage,
-            "inputPlaceholder": inputPlaceholder,
-            "conversationEndedMessage": conversationEndedMessage,
             "chatStyle": chatStyle.toJSONString(),
         ]
         do {
@@ -131,6 +131,24 @@ extension AgentChatControllerOptions {
             }
         } catch {
             debugLog ("Error serializing brand object: \(error)")
+        }
+
+        // Subset of the ChatUiStrings type from chat/ui-strings.ts
+        let chatInterfaceStrings: [String: Any] = [
+            "inputPlaceholder": inputPlaceholder,
+            "disclosure": disclosure ?? "",
+            "conversationEndedMessage": conversationEndedMessage,
+            "newChatButtonLabel": newChatButtonLabel,
+        ]
+        do {
+            let chatInterfaceStringsData = try JSONSerialization.data(withJSONObject: chatInterfaceStrings, options: [])
+            if let chatInterfaceStringsJSON = String(data: chatInterfaceStringsData, encoding: .utf8) {
+                queryItems.append(URLQueryItem(name: "chatInterfaceStrings", value: chatInterfaceStringsJSON))
+            } else {
+                debugLog("Error: Unable to encode chatInterfaceStrings data as a string")
+            }
+        } catch {
+            debugLog("Error serializing chatInterfaceStrings object: \(error)")
         }
 
         if let co = conversationOptions {
