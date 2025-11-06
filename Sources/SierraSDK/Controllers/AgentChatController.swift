@@ -420,6 +420,10 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                         updateActionMenu()
                         optionsConversationCallbacks?.onRequestEndConversationEnabledChange(enabled)
                     }
+                case "onExternalAgentJoin":
+                    let externalConversationID = body["externalConversationID"] as? String
+                    let externalAgentID = body["externalAgentID"] as? String
+                    optionsConversationCallbacks?.onExternalAgentJoin(externalConversationID: externalConversationID, externalAgentID: externalAgentID)
                 case "onEndChat":
                     optionsConversationCallbacks?.onConversationEnded()
                 case "onPrint":

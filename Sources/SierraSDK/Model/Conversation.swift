@@ -35,6 +35,8 @@ public protocol ConversationCallbacks: AnyObject {
     func onRequestEndConversationEnabledChange(_ enabled: Bool)
     /// Callback invoked when the conversation ends.
     func onConversationEnded()
+    /// Callback invoked when a non-Sierra agent joins the conversation.
+    func onExternalAgentJoin(externalConversationID: String?, externalAgentID: String?)
     /// Callback invoked when a secret needs needs to be refreshed. Reply handler should be invoked with one of:
     /// - a new value for the secret
     /// - nil if the secret cannot be provided due to a known condition (e.g. the user has signed out)
@@ -50,6 +52,7 @@ public extension ConversationCallbacks {
     func onAgentMessageEnd() {}
     func onRequestEndConversationEnabledChange(_ enabled: Bool) {}
     func onConversationEnded() {}
+    func onExternalAgentJoin(externalConversationID: String?, externalAgentID: String?) {}
     func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void) {
         replyHandler(.success(nil))
     }
