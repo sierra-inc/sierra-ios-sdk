@@ -73,6 +73,11 @@ public struct AgentChatControllerOptions {
     /// If set to true user will be able to end a conversation via a menu item.
     public var canEndConversation: Bool = false;
 
+    /// If set to true, indicates the app uses a custom action bar and the SDK should not show
+    /// its native end conversation button, even when canEndConversation is true. The end
+    /// conversation functionality remains available via the endConversation() method.
+    public var useCustomActionBar: Bool = false;
+
     /// If set to true user will be able to start a new conversation via a button in the chat UI.
     public var canStartNewChat: Bool = false;
 
@@ -356,7 +361,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private func updateActionMenu() {
         var menuItems: [UIMenuElement] = []
 
-        if options.canEndConversation {
+        if options.canEndConversation && !options.useCustomActionBar {
             let endConversationAction = UIAction(title: options.endConversationLabel, image: UIImage(systemName: "xmark.circle")) { [weak self] _ in
                 Task {
                     await self?.endConversation()
