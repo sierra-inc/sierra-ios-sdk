@@ -7,6 +7,19 @@ public struct AgentChatControllerOptions {
     /// Name for this virtual agent, displayed as the navigation item title.
     public let name: String
 
+    /// Use chat interface strings configured on the server (greeting, error messages, etc.).
+    /// When enabled, server-configured strings take precedence over local string options.
+    public var useConfiguredChatStrings: Bool = false
+
+    /// Use styling configured on the server (colors, typography, logo, etc.).
+    /// When enabled, server-configured styles take precedence over local chatStyle.
+    ///
+    /// Note: iOS hides the title bar in the web view by default and uses the native UINavigationBar
+    /// instead. The native navigation bar colors are still configured via chatStyle.colors.titleBar
+    /// and chatStyle.colors.titleBarText, which remain necessary for iOS even when using
+    /// server-configured styles.
+    public var useConfiguredStyle: Bool = false
+
     /// Message shown from the agent when starting the conversation. Overridden by server-configured
     /// greeting message if useConfiguredChatStrings is true.
     public var greetingMessage: String = "How can I help you today?"
@@ -48,15 +61,14 @@ public struct AgentChatControllerOptions {
     public var humanAgentTransferLeftMessage: String = "Agent disconnected"
 
     /// Placeholder value displayed in the chat input when it is empty. Overridden by
-    /// server-configured input placeholder if useConfiguredChatStrings is true.
-    public var inputPlaceholder: String = "Message…"
+    /// server-configured input placeholder if useConfiguredChatStrings is true. Defaults to
+    /// "Message…" when this value is empty.
+    public var inputPlaceholder: String = ""
 
     /// Shown in place of the chat input when the conversation has ended. Overridden by
-    /// server-configured conversation ended message if useConfiguredChatStrings is true.
-    public var conversationEndedMessage: String = "Chat Ended";
-
-    /// If true, prefer server-configured chat strings over the ones provided in SDK options.
-    public var useConfiguredChatStrings: Bool = false
+    /// server-configured conversation ended message if useConfiguredChatStrings is true. Defaults
+    /// to "Chat ended" when this value is empty.
+    public var conversationEndedMessage: String = ""
 
     /// Message shown when there is no internet connection.
     public var noInternetConnectionErrorMessage: String = "No internet connection. Please check your connection and try again."
@@ -64,7 +76,14 @@ public struct AgentChatControllerOptions {
     /// Message shown when the chat cannot be loaded.
     public var chatLoadErrorMessage: String = "Could not load the chat"
 
-    /// Customize the look and feel of the chat
+    /// Customize the look and feel of the chat.
+    ///
+    /// When useConfiguredStyle is true, the web content styling comes from the server.
+    /// However, this property is still used for native iOS UI elements:
+    /// - colors.titleBar: Navigation bar background color
+    /// - colors.titleBarText: Navigation bar text color and loading spinner color
+    /// - colors.backgroundColor: Container view and WebView background color
+    /// - typography.customFonts: Custom fonts to load for the web content
     public var chatStyle: ChatStyle = DEFAULT_CHAT_STYLE
 
     /// If set to true user will be able to save a conversation transcript via a menu item.
@@ -80,6 +99,15 @@ public struct AgentChatControllerOptions {
 
     /// If set to true user will be able to start a new conversation via a button in the chat UI.
     public var canStartNewChat: Bool = false;
+
+    /// Start the chat with messages at the top of the chat frame, allowing the conversation to
+    /// expand downward until the frame height has been reached, at which point older messages
+    /// scroll out of view.
+    public var startAtTop: Bool = false;
+
+    /// Pin the disclosure text to the top of the chat frame so that it is visible throughout
+    /// the conversation and never scrolls out of view.
+    public var pinDisclosure: Bool = false;
 
     /// Menu label for the conversation transcript saving item.
     public var saveTranscriptLabel: String = "Save Transcript"
@@ -185,6 +213,14 @@ extension AgentChatControllerOptions {
             queryItems.append(URLQueryItem(name: "canStartNewChat", value: "true"))
         }
 
+        if startAtTop {
+            queryItems.append(URLQueryItem(name: "startAtTop", value: "true"))
+        }
+
+        if pinDisclosure {
+            queryItems.append(URLQueryItem(name: "pinDisclosure", value: "true"))
+        }
+
         if canSaveTranscript {
             queryItems.append(URLQueryItem(name: "canPrintTranscript", value: "true"))
         }
@@ -195,6 +231,10 @@ extension AgentChatControllerOptions {
 
         if useConfiguredChatStrings {
             queryItems.append(URLQueryItem(name: "useConfiguredChatStrings", value: "true"))
+        }
+
+        if useConfiguredStyle {
+            queryItems.append(URLQueryItem(name: "useConfiguredStyle", value: "true"))
         }
 
         return queryItems
@@ -729,7 +769,7 @@ public class DeprecatedAgentChatController : UIViewController, ConversationDeleg
 
         // The custom greeting was initially a UI-only concept and thus specified via AgentChatControllerOptions,
         // but it now also affects the API. We copy it over to ConversationOptions so that it can be included in
-        // API requests..
+        // API requests.
         var conversationOptions = options.conversationOptions
         if !options.greetingMessage.isEmpty && conversationOptions?.customGreeting == nil {
             if conversationOptions == nil {

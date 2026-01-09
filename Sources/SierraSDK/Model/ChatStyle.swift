@@ -25,6 +25,8 @@ public struct ChatStyle {
 
 public let DEFAULT_CHAT_STYLE = ChatStyle(colors: DEFAULT_CHAT_STYLE_COLORS, layout: DEFAULT_CHAT_STYLE_LAYOUT)
 
+/// Typography settings for chat UI. When useConfiguredStyle is true in AgentChatControllerOptions,
+/// these settings are overridden by server-configured typography.
 public struct ChatStyleTypography {
     /// The font family, a comma-separated list of font names.
     /// Note: Data for custom fonts must be provided in the `customFonts` property.
@@ -92,6 +94,8 @@ public enum FontType: String {
     }
 }
 
+/// Color settings for chat UI. When useConfiguredStyle is true in AgentChatControllerOptions, these
+/// settings are overridden by server-configured colors.
 public struct ChatStyleColors {
     /// The background color for the chat view.
     public let backgroundColor: UIColor
