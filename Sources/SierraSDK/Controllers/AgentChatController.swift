@@ -392,6 +392,12 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         queryItems.append(URLQueryItem(name: "persistenceMode", value: "tab"))
 
         urlComponents.queryItems = queryItems
+
+        // Fix RFC 3986 vs WHATWG mismatch: JavaScript's URLSearchParams decodes + as space,
+        // but iOS doesn't encode + by default. Force-encode + as %2B for compatibility.
+        urlComponents.percentEncodedQuery = urlComponents.percentEncodedQuery?
+            .replacingOccurrences(of: "+", with: "%2B")
+
         if let url = urlComponents.url {
             let request = URLRequest(url: url)
             webView.load(request)
