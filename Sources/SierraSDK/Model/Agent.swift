@@ -3,14 +3,16 @@
 import Foundation
 import UIKit
 
-public struct AgentConfig {
+public struct AgentConfig: Equatable {
     public let token: String
     public let target: String?
     public var apiHost: AgentAPIHost = .prod
+    public var persistence: PersistenceMode = .memory
 
-    public init(token: String, target: String? = nil) {
+    public init(token: String, target: String? = nil, persistence: PersistenceMode = .memory) {
         self.token = token
         self.target = target
+        self.persistence = persistence
     }
 
     var url: String {
@@ -59,10 +61,24 @@ public enum AgentAPIHost: String {
 public class Agent {
     private let api: AgentAPI
     let config: AgentConfig
+    private let storage: ConversationStorage
 
     init(config: AgentConfig) {
         self.config = config
         self.api = AgentAPI(config: config)
+        self.storage = ConversationStorage(
+            mode: config.persistence,
+            storageKey: "sierra_chat_\(config.token)"
+        )
+    }
+
+    func getStorage() -> ConversationStorage {
+        return storage
+    }
+
+    /// Clears any stored conversation state, causing the next chat session to start fresh.
+    public func resetConversation() {
+        storage.clear()
     }
 
     @available(*, deprecated)

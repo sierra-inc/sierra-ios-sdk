@@ -296,6 +296,19 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         contentController.add(self, name: "chatHandler")
         contentController.addScriptMessageHandler(self, contentWorld: .page, name: "chatReplyHandler")
 
+        // Pre-populate storage before the web content loads. This allows the web embed to read
+        // stored conversation state synchronously during init.
+        let storage = agent.getStorage().getAll()
+        if let jsonData = try? JSONSerialization.data(withJSONObject: storage),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            let storageScript = WKUserScript(
+                source: "window.__sierraSyncStorage = \(jsonString);",
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+            contentController.addUserScript(storageScript)
+        }
+
         webView = CustomWebView(frame: .zero, configuration: configuration)
         webView.backgroundColor = options.chatStyle.colors.backgroundColor
         webView.isOpaque = true
@@ -387,9 +400,10 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         // Always hideTitleBar for iOS
         queryItems.append(URLQueryItem(name: "hideTitleBar", value: "true"))
 
-        // In iOS, we persist state via sessionStorage since we can rely on it being
-        // maintained across the iOS lifecycle.
-        queryItems.append(URLQueryItem(name: "persistenceMode", value: "tab"))
+        // Use custom persistence mode to enable Agent-level storage via JS bridge.
+        // This allows conversation state to persist across controller recreation
+        // (when the same Agent is reused) and optionally survive app restarts (DISK mode).
+        queryItems.append(URLQueryItem(name: "persistenceMode", value: "custom"))
 
         urlComponents.queryItems = queryItems
 
@@ -482,6 +496,12 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                        let formData = body["formData"] as? String {
                         handlePrint(url: URL(string: url)!, formData: formData)
                     }
+                case "storeValue":
+                    if let key = body["key"] as? String, let value = body["value"] as? String {
+                        agent.getStorage().setItem(key, value)
+                    }
+                case "clearStorage":
+                    agent.getStorage().clear()
                 default:
                     debugLog("Received unknown message type: \(type)")
                     break
