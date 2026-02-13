@@ -3,6 +3,17 @@
 import UIKit
 import WebKit
 
+/// Controls whether the message label (speaker name and timestamp) is shown
+/// above or below chat message bubbles.
+public enum MessageLabelPlacement: String {
+    /// Use the server-configured value from the Style panel.
+    case `default` = ""
+    /// Show the message label above chat bubbles.
+    case above = "above"
+    /// Show the message label below chat bubbles.
+    case below = "below"
+}
+
 public struct AgentChatControllerOptions {
     /// Name for this virtual agent, displayed as the navigation item title.
     public let name: String
@@ -109,6 +120,19 @@ public struct AgentChatControllerOptions {
     /// the conversation and never scrolls out of view.
     public var pinDisclosure: Bool = false;
 
+    /// Whether to show timestamps on chat messages. When nil and useConfiguredStyle is true, the
+    /// server-configured value is used.
+    public var showTimestamps: Bool?
+
+    /// Whether to show speaker labels (e.g. the agent name) on chat messages. When nil and
+    /// useConfiguredStyle is true, the server-configured value is used.
+    public var showSpeakerLabels: Bool?
+
+    /// Controls whether the message label (speaker name and timestamp) is shown above or below chat
+    /// message bubbles. When `.default` and useConfiguredStyle is true, the server-configured
+    /// value is used.
+    public var messageLabelPlacement: MessageLabelPlacement = .default
+
     /// Menu label for the conversation transcript saving item.
     public var saveTranscriptLabel: String = "Save Transcript"
 
@@ -143,7 +167,7 @@ extension AgentChatControllerOptions {
         var queryItems = [URLQueryItem]()
 
         // Should match the Brand type from bots/useChat.tsx
-        let brand: [String: Any] = [
+        var brand: [String: Any] = [
             "botName": name,
             "greetingMessage": greetingMessage,
             "errorMessage": errorMessage,
@@ -154,7 +178,10 @@ extension AgentChatControllerOptions {
             "agentJoinedMessage": humanAgentTransferJoinedMessage,
             "agentLeftMessage": humanAgentTransferLeftMessage,
             "chatStyle": chatStyle.toJSONString(),
+            "messageLabelPlacement": messageLabelPlacement.rawValue,
         ]
+        if let showTimestamps { brand["showTimestamps"] = showTimestamps }
+        if let showSpeakerLabels { brand["showBotName"] = showSpeakerLabels }
         do {
             let brandData = try JSONSerialization.data(withJSONObject: brand, options: [])
             if let brandJSON = String(data: brandData, encoding: .utf8) {
@@ -274,6 +301,10 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         setupWebView()
 
         navigationItem.title = options.name
+        updateNavigationBarAppearance()
+    }
+
+    private func updateNavigationBarAppearance() {
         let appearance = UINavigationBarAppearance()
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = options.chatStyle.colors.titleBar
@@ -298,16 +329,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
         // Pre-populate storage before the web content loads. This allows the web embed to read
         // stored conversation state synchronously during init.
-        let storage = agent.getStorage().getAll()
-        if let jsonData = try? JSONSerialization.data(withJSONObject: storage),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
-            let storageScript = WKUserScript(
-                source: "window.__sierraSyncStorage = \(jsonString);",
-                injectionTime: .atDocumentStart,
-                forMainFrameOnly: true
-            )
-            contentController.addUserScript(storageScript)
-        }
+        addStorageUserScript(to: contentController)
 
         webView = CustomWebView(frame: .zero, configuration: configuration)
         webView.backgroundColor = options.chatStyle.colors.backgroundColor
@@ -383,6 +405,47 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         removeLifecycleObservers()
+    }
+
+    public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
+
+        // Update native UI elements for the new appearance
+        updateNavigationBarAppearance()
+        view.backgroundColor = options.chatStyle.colors.backgroundColor
+        webView.backgroundColor = options.chatStyle.colors.backgroundColor
+        webView.scrollView.backgroundColor = options.chatStyle.colors.backgroundColor
+        loadingSpinner?.color = options.chatStyle.colors.titleBarText
+
+        // Reload the WebView with updated color values
+        reloadWebViewForAppearanceChange()
+    }
+
+    /// Reloads the WebView with current color values after an appearance change.
+    /// Preserves conversation state by updating the storage user script before reloading.
+    private func reloadWebViewForAppearanceChange() {
+        webViewLoaded = false
+        isPageVisible = false
+        let contentController = webView.configuration.userContentController
+        contentController.removeAllUserScripts()
+        addStorageUserScript(to: contentController)
+        loadChatURL()
+    }
+
+    /// Adds a user script that pre-populates conversation storage for the web embed.
+    private func addStorageUserScript(to contentController: WKUserContentController) {
+        let storage = agent.getStorage().getAll()
+        if let jsonData = try? JSONSerialization.data(withJSONObject: storage),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            let storageScript = WKUserScript(
+                source: "window.__sierraSyncStorage = \(jsonString);",
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+            contentController.addUserScript(storageScript)
+        }
     }
 
     private func loadChatURL() {
