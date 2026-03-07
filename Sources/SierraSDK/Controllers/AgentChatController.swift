@@ -14,6 +14,16 @@ public enum MessageLabelPlacement: String {
     case below = "below"
 }
 
+/// Controls the text direction of the chat interface.
+public enum TextDirection: String {
+    /// Left-to-right layout (default).
+    case ltr = "ltr"
+    /// Right-to-left layout, for languages like Arabic and Hebrew.
+    case rtl = "rtl"
+    /// Automatically configured from the conversation locale.
+    case auto = "auto"
+}
+
 public struct AgentChatControllerOptions {
     /// Name for this virtual agent, displayed as the navigation item title.
     public let name: String
@@ -133,6 +143,14 @@ public struct AgentChatControllerOptions {
     /// value is used.
     public var messageLabelPlacement: MessageLabelPlacement = .default
 
+    /// Explicitly set the text direction of the chat window.
+    /// - `.ltr`: Forces the chat window to use a left-to-right language layout.
+    /// - `.rtl`: Forces the chat window to use a right-to-left language layout.
+    /// - `.auto`: Text direction is automatically configured from the conversation locale.
+    /// When nil and useConfiguredStyle is true, the server-configured value is used.
+    /// Otherwise defaults to left-to-right.
+    public var textDirection: TextDirection?
+
     /// Menu label for the conversation transcript saving item.
     public var saveTranscriptLabel: String = "Save Transcript"
 
@@ -147,6 +165,12 @@ public struct AgentChatControllerOptions {
 
     /// Message that will be automatically sent from the user when the conversation starts.
     public var initialUserMessage: String?
+
+    /// A signed JWT that identifies the end user for this session. When set, the token is
+    /// forwarded to the server on every chat request for identity resolution. The server
+    /// extracts the `sub` claim and resolves a persistent EndUser, enabling cross-session
+    /// memory and conversation history. Must be an RS256-signed JWT with `aud: "sierra.ai"`.
+    public var userIdentityToken: String?
 
     /// Customization of the Conversation that the controller will create.
     public var conversationOptions: ConversationOptions?
@@ -262,6 +286,14 @@ extension AgentChatControllerOptions {
 
         if useConfiguredStyle {
             queryItems.append(URLQueryItem(name: "useConfiguredStyle", value: "true"))
+        }
+
+        if let textDirection = textDirection {
+            queryItems.append(URLQueryItem(name: "textDirection", value: textDirection.rawValue))
+        }
+
+        if let userIdentityToken = userIdentityToken, !userIdentityToken.isEmpty {
+            queryItems.append(URLQueryItem(name: "userIdentityToken", value: userIdentityToken))
         }
 
         return queryItems
