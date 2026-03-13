@@ -42,6 +42,10 @@ public protocol ConversationCallbacks: AnyObject {
     /// - nil if the secret cannot be provided due to a known condition (e.g. the user has signed out)
     /// - an error if the secret cannot be fetched right now, but the request should be retried.
     func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void)
+    /// Callback invoked when the conversation list is shown.
+    func onShowConversationList()
+    /// Callback invoked when the conversation list is hidden (a conversation is opened or started).
+    func onHideConversationList()
 }
 
 // Default no-op implementations of ConversationCallbacks, so that clients can
@@ -56,6 +60,8 @@ public extension ConversationCallbacks {
     func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void) {
         replyHandler(.success(nil))
     }
+    func onShowConversationList() {}
+    func onHideConversationList() {}
 }
 
 public struct ConversationTransfer {

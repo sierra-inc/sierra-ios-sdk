@@ -118,7 +118,10 @@ public struct AgentChatControllerOptions {
     /// conversation functionality remains available via the endConversation() method.
     public var useCustomActionBar: Bool = false;
 
-    /// If set to true user will be able to start a new conversation via a button in the chat UI.
+    /// If set to true, a "new chat" button is shown on the conversation view after the
+    /// conversation has ended. Only effective when `canEndConversation` is true. When the
+    /// conversation list is enabled, the list view always includes its own button to start
+    /// a new chat regardless of this setting.
     public var canStartNewChat: Bool = false;
 
     /// Start the chat with messages at the top of the chat frame, allowing the conversation to
@@ -171,6 +174,13 @@ public struct AgentChatControllerOptions {
     /// extracts the `sub` claim and resolves a persistent EndUser, enabling cross-session
     /// memory and conversation history. Must be an RS256-signed JWT with `aud: "sierra.ai"`.
     public var userIdentityToken: String?
+
+    /// Whether to show the conversation list UI. Requires userIdentityToken.
+    public var enableConversationList: Bool = false
+
+    /// Whether to show the conversation list by default when the chat opens.
+    /// Only takes effect when enableConversationList is true.
+    public var showConversationListByDefault: Bool = false
 
     /// Customization of the Conversation that the controller will create.
     public var conversationOptions: ConversationOptions?
@@ -296,6 +306,14 @@ extension AgentChatControllerOptions {
             queryItems.append(URLQueryItem(name: "userIdentityToken", value: userIdentityToken))
         }
 
+        if enableConversationList {
+            queryItems.append(URLQueryItem(name: "enableConversationList", value: "true"))
+        }
+
+        if showConversationListByDefault {
+            queryItems.append(URLQueryItem(name: "showConversationListByDefault", value: "true"))
+        }
+
         return queryItems
     }
 }
@@ -308,6 +326,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private var loadingSpinner: UIActivityIndicatorView?
     private weak var optionsConversationCallbacks: ConversationCallbacks?
     private var requestEndConversationEnabled = false
+    private var showingConversationList = false
     private var isPageVisible = false
     private var lifecycleObservers: [NSObjectProtocol] = []
 
@@ -328,12 +347,14 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         }
 
         optionsConversationCallbacks = options.conversationCallbacks
+        showingConversationList = options.enableConversationList && options.showConversationListByDefault && options.userIdentityToken != nil
 
         super.init(nibName: nil, bundle: nil)
         setupWebView()
 
         navigationItem.title = options.name
         updateNavigationBarAppearance()
+        updateNavigationItems()
     }
 
     private func updateNavigationBarAppearance() {
@@ -345,6 +366,36 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         navigationItem.scrollEdgeAppearance = appearance
         navigationItem.compactAppearance = appearance
         navigationItem.compactScrollEdgeAppearance = appearance
+    }
+
+    private func updateNavigationItems() {
+        guard !options.useCustomActionBar else { return }
+
+        if options.enableConversationList && !showingConversationList {
+            if #available(iOS 16.0, *) {
+                navigationItem.backAction = UIAction { [weak self] _ in
+                    guard let self else { return }
+                    Task { await self.showConversationList() }
+                }
+                navigationItem.leftBarButtonItem = nil
+                navigationItem.hidesBackButton = false
+            } else {
+                let backAction = UIAction(title: "", image: UIImage(systemName: "chevron.backward")) { [weak self] _ in
+                    guard let self else { return }
+                    Task { await self.showConversationList() }
+                }
+                navigationItem.leftBarButtonItem = UIBarButtonItem(primaryAction: backAction)
+                navigationItem.hidesBackButton = true
+            }
+        } else {
+            if #available(iOS 16.0, *) {
+                navigationItem.backAction = nil
+            }
+            navigationItem.leftBarButtonItem = nil
+            navigationItem.hidesBackButton = false
+        }
+
+        updateActionMenu()
     }
 
     required public init?(coder aDecoder: NSCoder) {
@@ -514,6 +565,11 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     private func updateActionMenu() {
+        if showingConversationList {
+            navigationItem.rightBarButtonItem = nil
+            return
+        }
+
         var menuItems: [UIMenuElement] = []
 
         if options.canEndConversation && !options.useCustomActionBar {
@@ -526,7 +582,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
             menuItems.append(endConversationAction)
         }
 
-        if options.canSaveTranscript {
+        if options.canSaveTranscript && !options.useCustomActionBar {
             menuItems.append(UIAction(title: options.saveTranscriptLabel, image: UIImage(systemName: "square.and.arrow.down.on.square")) { [weak self] _ in
                 Task {
                     await self?.saveTranscript()
@@ -586,6 +642,14 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     optionsConversationCallbacks?.onExternalAgentJoin(externalConversationID: externalConversationID, externalAgentID: externalAgentID)
                 case "onEndChat":
                     optionsConversationCallbacks?.onConversationEnded()
+                case "onShowConversationList":
+                    showingConversationList = true
+                    updateNavigationItems()
+                    optionsConversationCallbacks?.onShowConversationList()
+                case "onHideConversationList":
+                    showingConversationList = false
+                    updateNavigationItems()
+                    optionsConversationCallbacks?.onHideConversationList()
                 case "onPrint":
                     if let url = body["url"] as? String,
                        let formData = body["formData"] as? String {
@@ -869,6 +933,17 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
             try await webView.evaluateJavaScript("sierraMobile.endConversation()", completionHandler: nil)
         } catch {
             debugLog("Cannot end conversation, error: \(error)")
+        }
+    }
+
+    /// Navigate to the conversation list programmatically
+    /// This is the public API that customers can call themselves.
+    public func showConversationList() async {
+        debugLog("Showing conversation list")
+        do {
+            try await webView.evaluateJavaScript("sierraMobile.showConversationList()", completionHandler: nil)
+        } catch {
+            debugLog("Cannot show conversation list, error: \(error)")
         }
     }
 
