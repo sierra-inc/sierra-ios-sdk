@@ -8,15 +8,22 @@ public struct AgentConfig: Equatable {
     public let target: String?
     public var apiHost: AgentAPIHost = .prod
     public var persistence: PersistenceMode = .memory
+    /// Headless API token required for SVP voice connections. Not needed for chat.
+    public var headlessAPIToken: String?
 
-    public init(token: String, target: String? = nil, persistence: PersistenceMode = .memory) {
+    public init(token: String, target: String? = nil, persistence: PersistenceMode = .memory, headlessAPIToken: String? = nil) {
         self.token = token
         self.target = target
         self.persistence = persistence
+        self.headlessAPIToken = headlessAPIToken
     }
 
     var url: String {
         return "\(apiHost.embedBaseURL)/agent/\(token)/mobile"
+    }
+
+    var conversationRendererURL: String {
+        return "\(apiHost.embedBaseURL)/agent/\(token)/mobile-renderer"
     }
 }
 
@@ -39,6 +46,17 @@ public enum AgentAPIHost: String {
             return "https://api-staging.sierra.chat"
         case .local:
             return "https://api.sierra.codes:8083"
+        }
+    }
+
+    /// Voice/SVP endpoints are served on a separate port in local dev.
+    /// In production, voice shares the same host as the API.
+    var voiceBaseURL: String {
+        switch self {
+        case .local:
+            return "https://sierra.codes:8084"
+        default:
+            return apiBaseURL
         }
     }
 
