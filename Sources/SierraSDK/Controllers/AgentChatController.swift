@@ -129,6 +129,9 @@ public struct AgentChatControllerOptions {
     /// scroll out of view.
     public var startAtTop: Bool = false;
 
+    /// Whether to show a scroll-to-bottom indicator when the user scrolls up in the chat.
+    public var showScrollToBottom: Bool = false;
+
     /// Pin the disclosure text to the top of the chat frame so that it is visible throughout
     /// the conversation and never scrolls out of view.
     public var pinDisclosure: Bool = false;
@@ -276,6 +279,10 @@ extension AgentChatControllerOptions {
 
         if startAtTop {
             queryItems.append(URLQueryItem(name: "startAtTop", value: "true"))
+        }
+
+        if showScrollToBottom {
+            queryItems.append(URLQueryItem(name: "showScrollToBottom", value: "true"))
         }
 
         if pinDisclosure {

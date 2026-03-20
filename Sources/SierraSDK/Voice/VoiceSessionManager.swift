@@ -64,6 +64,7 @@ public class VoiceSessionManager: NSObject {
     private var isSessionRunning = false
     private var hasDeliveredSessionInfo = false
     private var isUserListeningPaused = false
+    private var interruptionInProgress = false
     private var audioSessionObservers: [NSObjectProtocol] = []
     private let sessionQueue = DispatchQueue(label: "com.sierra.sdk.voice.session")
     private let sessionQueueKey = DispatchSpecificKey<Void>()
@@ -109,6 +110,7 @@ public class VoiceSessionManager: NSObject {
         sessionSync {
             isSessionRunning = true
             hasDeliveredSessionInfo = false
+            interruptionInProgress = false
         }
         setState(.connecting)
         transport?.connect()
@@ -119,6 +121,7 @@ public class VoiceSessionManager: NSObject {
             isSessionRunning = false
             hasDeliveredSessionInfo = false
             isUserListeningPaused = false
+            interruptionInProgress = false
         }
         audioCaptureSession?.resetListeningPauseState()
         stopAudio()
@@ -327,11 +330,13 @@ public class VoiceSessionManager: NSObject {
 
     public func pauseListening() {
         sessionSync { isUserListeningPaused = true }
+        debugLog("SVP: Listening paused by user")
         audioCaptureSession?.pauseListening()
     }
 
     public func resumeListening() {
         sessionSync { isUserListeningPaused = false }
+        debugLog("SVP: Listening resumed by user")
         audioCaptureSession?.resumeListening()
     }
 
@@ -385,16 +390,34 @@ public class VoiceSessionManager: NSObject {
         switch type {
         case .began:
             debugLog("SVP: Audio session interruption began")
+            interruptionInProgress = true
+            debugLog("SVP: Listening paused due to audio session interruption")
+            audioCaptureSession?.pauseListening()
+            audioPlaybackQueue?.clear()
         case .ended:
             let shouldResume = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
                 .map { AVAudioSession.InterruptionOptions(rawValue: $0).contains(.shouldResume) } ?? false
             debugLog("SVP: Audio session interruption ended (shouldResume=\(shouldResume))")
-            if shouldResume, reactivateAudioSessionIfNeeded(), !isUserListeningPaused {
-                audioCaptureSession?.resumeListening()
+            guard interruptionInProgress else { return }
+            interruptionInProgress = false
+            if shouldResume {
+                if reactivateAudioSessionIfNeeded(), !isUserListeningPaused {
+                    debugLog("SVP: Listening resumed after interruption")
+                    audioCaptureSession?.resumeListening()
+                }
+                return
             }
+            endSessionForExternalAudioInterruption(reason: "audio_session_interruption_no_resume")
         @unknown default:
             break
         }
+    }
+
+    private func endSessionForExternalAudioInterruption(reason: String) {
+        guard sessionSync({ isSessionRunning }) else { return }
+        debugLog("SVP: Ending session due to external audio interruption (\(reason))")
+        disconnect(sendCloseMessage: true, closeReason: reason)
+        delegate?.voiceSessionDidEnd(self)
     }
 
     private func activateAudioSession() throws {

@@ -23,9 +23,9 @@ final class AudioCaptureSession {
     private let inputTapDuration: Double
 
     // Adaptive echo gate state -- accessed from the AVAudioEngine tap thread.
-    private let echoGateFloorMultiplier: Float = 2.5
+    private let echoGateFloorMultiplier: Float = 2.2
     private let echoGateFloorDecay: Float = 0.985
-    private let echoGateMinThreshold: Float = 0.015
+    private let echoGateMinThreshold: Float = 0.012
     private let echoGateOnsetFrames: Int = 2
     private let echoGateOffsetFrames: Int = 4
     private let echoGateInitialFloorRMS: Float = 0.01

@@ -1,6 +1,7 @@
 // Copyright Sierra
 
 import UIKit
+import AVFoundation
 
 @_spi(ExperimentalVoice)
 public struct AgentVoiceStyle {
@@ -268,6 +269,11 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     public func voiceSession(_ session: VoiceSessionManager, didEncounterError error: Error) {
         debugLog("Voice session error: \(error)")
+        if isExternalAudioInterruptionError(error) {
+            debugLog("AgentVoiceController: ending voice session due to external audio interruption error: \(error.localizedDescription)")
+            DispatchQueue.main.async { self.endConversationForExit() }
+            return
+        }
         showErrorState(message: userFacingErrorMessage(for: error))
         DispatchQueue.main.async {
             self.voiceCallbacks?.onVoiceError(error: error)
@@ -575,7 +581,59 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     }
 
     private func userFacingErrorMessage(for error: Error) -> String {
-        return "Voice connection failed: Please try again later"
+        return "Voice connection failed: Please check your credentials or try again later"
+    }
+
+    private func isExternalAudioInterruptionError(_ error: Error) -> Bool {
+        var currentError: NSError? = error as NSError
+        while let nsError = currentError {
+            let domain = nsError.domain.lowercased()
+            let isAudioRelatedDomain =
+                domain.contains("audio") ||
+                domain.contains("avfoundation") ||
+                domain.contains("avaudiosession")
+
+            if isAudioRelatedDomain,
+               let code = AVAudioSession.ErrorCode(rawValue: nsError.code),
+               (code == .cannotInterruptOthers || code == .insufficientPriority) {
+                return true
+            }
+
+            if isAudioRelatedDomain {
+                let message = nsError.localizedDescription.lowercased()
+                if message.contains("interruption") || message.contains("cannot interrupt others") {
+                    return true
+                }
+            }
+
+            currentError = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
+    }
+
+    private func endConversationForExit() {
+        guard !hasShutdownVoiceSession else { return }
+        shutdownVoiceSessionIfNeeded()
+        voiceCallbacks?.onVoiceEnded()
+    }
+
+    private func dismissVoiceController() {
+        if let navigationController, navigationController.topViewController === self {
+            if navigationController.viewControllers.count > 1 {
+                navigationController.popViewController(animated: true)
+            } else if navigationController.presentingViewController != nil {
+                navigationController.dismiss(animated: true)
+            } else {
+                dismiss(animated: true)
+            }
+            return
+        }
+
+        if presentingViewController != nil {
+            dismiss(animated: true)
+        } else {
+            navigationController?.dismiss(animated: true)
+        }
     }
 
     private func startWaveformAnimation() {
@@ -625,9 +683,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     }
 
     @objc private func endTapped() {
-        guard !hasShutdownVoiceSession else { return }
-        shutdownVoiceSessionIfNeeded()
-        voiceCallbacks?.onVoiceEnded()
+        endConversationForExit()
     }
 }
 
