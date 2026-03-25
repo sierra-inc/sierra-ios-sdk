@@ -53,6 +53,7 @@ public class VoiceSessionManager: NSObject {
     private let config: AgentConfig
     private let conversationId: String
     private let disableInterruptions: Bool
+    private let locale: Locale
     private let agentParameters: [String: String]
     private weak var delegate: VoiceSessionDelegate?
 
@@ -85,12 +86,14 @@ public class VoiceSessionManager: NSObject {
         config: AgentConfig,
         conversationId: String = UUID().uuidString,
         disableInterruptions: Bool = false,
+        locale: Locale = .current,
         agentParameters: [String: String] = [:],
         delegate: VoiceSessionDelegate
     ) {
         self.config = config
         self.conversationId = conversationId
         self.disableInterruptions = disableInterruptions
+        self.locale = locale
         self.agentParameters = agentParameters
         self.delegate = delegate
         super.init()
@@ -257,12 +260,12 @@ public class VoiceSessionManager: NSObject {
     }
 
     private func sendOpen() {
-        let locale = Locale.current.identifier
+        let localeIdentifier = locale.identifier
         var subMsg: [String: Any] = [
             "compatibilityDate": compatibilityDate,
             "conversationId": conversationId,
             "audioFormat": audioFormat,
-            "locale": locale,
+            "locale": localeIdentifier,
         ]
         if !agentParameters.isEmpty {
             subMsg["agentParameters"] = agentParameters

@@ -746,6 +746,14 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "chatReplyHandler", contentWorld: .page)
     }
 
+    private func openExternalURL(_ url: URL) {
+        if optionsConversationCallbacks?.onOpenURL(url: url) == true {
+            return
+        }
+
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+
     // MARK: - WKNavigationDelegate Methods
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -763,8 +771,8 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         if navigationAction.navigationType == .linkActivated,
            let url = navigationAction.request.url,
            !url.absoluteString.hasPrefix(self.agent.config.url) {
-            // Handle external links - open in browser
-            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            // Let the host app intercept external links before falling back to the system handler.
+            openExternalURL(url)
             decisionHandler(.cancel)
             return
         }

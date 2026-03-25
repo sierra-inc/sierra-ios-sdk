@@ -57,6 +57,10 @@ public struct AgentVoiceControllerOptions {
     /// used for sensitive runtime context needed at voice start.
     public var voiceAgentParameters: [String: String]?
 
+    /// Locale used for SVP voice session setup.
+    /// Defaults to the current device locale.
+    public var locale: Locale = .current
+
     /// When true, mutes microphone capture while the agent is speaking.
     /// Prevents speaker audio from being picked up by the mic and
     /// misinterpreted as a user interruption.
@@ -157,6 +161,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         let session = VoiceSessionManager(
             config: agent.config,
             disableInterruptions: options.disableInterruptions,
+            locale: options.locale,
             agentParameters: voiceAgentParameters,
             delegate: self
         )
