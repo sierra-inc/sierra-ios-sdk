@@ -184,17 +184,23 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
 
     private func evaluatePushAttachments(_ json: String) {
         debugLog("MobileRenderer: calling pushAttachments JS (json length=\(json.count))")
-        webView.callAsyncJavaScript(
-            "if (window.sierraMobile?.pushAttachments) { window.sierraMobile.pushAttachments(json); }",
-            arguments: ["json": json],
-            in: nil,
-            in: .page
-        ) { [weak self] result in
+        Task { @MainActor [weak self] in
             guard let self else { return }
-            switch result {
-            case .success:
+            do {
+                try await webView.callAsyncJavaScript(
+                    """
+                    const fn = window.sierraMobile?.pushAttachments;
+                    if (typeof fn === 'function') {
+                      return fn(json);
+                    }
+                    throw new Error('pushAttachments is not available');
+                    """,
+                    arguments: ["json": json],
+                    in: nil,
+                    in: .page
+                )
                 debugLog("MobileRenderer: pushAttachments JS executed successfully")
-            case let .failure(error):
+            } catch {
                 debugLog("MobileRenderer: pushAttachments JS error: \(error)")
                 self.delegate?.mobileRenderer(self, didEncounterError: error)
             }
@@ -208,6 +214,18 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         for json in pending {
             evaluatePushAttachments(json)
         }
+    }
+
+    /// Shapes posted by `mobile-renderer.tsx` use `attachments` (array). Older bundles may send a single `attachment` with `data`.
+    private func svpClientEventAttachments(from body: [String: Any]) -> [[String: Any]] {
+        if let attachments = body["attachments"] as? [[String: Any]] {
+            return attachments
+        }
+        if let attachment = body["attachment"] as? [String: Any],
+           let data = attachment["data"] as? [String: Any] {
+            return [["type": "custom", "data": data]]
+        }
+        return []
     }
 
     // MARK: - WKScriptMessageHandler
@@ -224,15 +242,9 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
 
         case "onSVPClientEvent":
             let text = body["text"] as? String ?? ""
-            if let attachments = body["attachments"] as? [[String: Any]] {
-                delegate?.mobileRenderer(self, didSendMessage: text, attachments: attachments)
-            } else if let attachment = body["attachment"] as? [String: Any],
-                      let data = attachment["data"] as? [String: Any] {
-                delegate?.mobileRenderer(self, didSendMessage: text, attachments: [[
-                    "type": "custom",
-                    "data": data,
-                ]])
-            }
+            let attachments = svpClientEventAttachments(from: body)
+            guard !text.isEmpty || !attachments.isEmpty else { break }
+            delegate?.mobileRenderer(self, didSendMessage: text, attachments: attachments)
 
         case "onAttachmentRendered":
             if let height = body["height"] as? CGFloat {

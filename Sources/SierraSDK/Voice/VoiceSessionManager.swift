@@ -55,6 +55,8 @@ public class VoiceSessionManager: NSObject {
     private let disableInterruptions: Bool
     private let locale: Locale
     private let agentParameters: [String: String]
+    private let enableText: Bool
+    private let forwardAgentAttachments: Bool
     private weak var delegate: VoiceSessionDelegate?
 
     private var transport: SVPTransport?
@@ -88,6 +90,8 @@ public class VoiceSessionManager: NSObject {
         disableInterruptions: Bool = false,
         locale: Locale = .current,
         agentParameters: [String: String] = [:],
+        enableText: Bool = true,
+        forwardAgentAttachments: Bool = true,
         delegate: VoiceSessionDelegate
     ) {
         self.config = config
@@ -95,6 +99,8 @@ public class VoiceSessionManager: NSObject {
         self.disableInterruptions = disableInterruptions
         self.locale = locale
         self.agentParameters = agentParameters
+        self.enableText = enableText
+        self.forwardAgentAttachments = forwardAgentAttachments
         self.delegate = delegate
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: ())
@@ -266,6 +272,8 @@ public class VoiceSessionManager: NSObject {
             "conversationId": conversationId,
             "audioFormat": audioFormat,
             "locale": localeIdentifier,
+            "enableText": enableText,
+            "forwardAgentAttachments": forwardAgentAttachments,
         ]
         if !agentParameters.isEmpty {
             subMsg["agentParameters"] = agentParameters

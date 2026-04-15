@@ -926,8 +926,13 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
     public func sendUserAttachment(_ attachments: [UserAttachment]) async throws {
         do {
             _ = try await webView.callAsyncJavaScript(
-                "window.sierraMobile.sendUserAttachment(attachments)",
-                // Convert to the RawMessageAttachment type that the web view expects.
+                """
+                const fn = window.sierraMobile?.sendUserAttachment;
+                if (typeof fn === 'function') {
+                  return fn(attachments);
+                }
+                throw new Error('sendUserAttachment is not available');
+                """,
                 arguments: ["attachments": attachments.map { [
                     "type": $0.type.rawValue,
                     "data": $0.data

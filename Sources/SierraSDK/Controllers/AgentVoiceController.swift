@@ -66,6 +66,12 @@ public struct AgentVoiceControllerOptions {
     /// misinterpreted as a user interruption.
     public var disableInterruptions: Bool = false
 
+    /// Sent as `enableText` in the SVP `open` submessage. Defaults to `true`.
+    public var enableText: Bool = true
+
+    /// Sent as `forwardAgentAttachments` in the SVP `open` submessage. Defaults to `true`.
+    public var forwardAgentAttachments: Bool = true
+
     public init(name: String) {
         self.name = name
         self.titleBarMessage = nil
@@ -163,6 +169,8 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             disableInterruptions: options.disableInterruptions,
             locale: options.locale,
             agentParameters: voiceAgentParameters,
+            enableText: options.enableText,
+            forwardAgentAttachments: options.forwardAgentAttachments,
             delegate: self
         )
         self.voiceSession = session
@@ -205,32 +213,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             "AgentVoiceController: received \(attachments.count) attachment(s) from SVP, types=\(attachmentTypes), renderer=\(renderer != nil ? "ready" : "nil")"
         )
 
-        var renderableAttachments: [[String: Any]] = []
 
-        for attachment in attachments {
-            let attType = attachment["type"] as? String ?? ""
-
-            if attType == "message",
-               let data = attachment["data"] as? [String: Any],
-               let text = data["text"] as? String,
-               !text.isEmpty {
-                debugLog("AgentVoiceController: message attachment -> text_client: \(text.prefix(80))")
-                voiceSession?.sendTextClient(text)
-            } else if attType == "custom",
-                      let data = attachment["data"] as? [String: Any],
-                      let dataType = data["type"] as? String,
-                      dataType == "send-client-message",
-                      let message = data["message"] as? String,
-                      !message.isEmpty {
-                debugLog("AgentVoiceController: send-client-message -> text_client: \(message.prefix(80))")
-                voiceSession?.sendTextClient(message)
-            } else {
-                renderableAttachments.append(attachment)
-            }
-        }
-
-        if !renderableAttachments.isEmpty {
-            let signature = renderableBatchSignature(renderableAttachments)
+        if !attachments.isEmpty {
+            let signature = renderableBatchSignature(attachments)
             if let signature, signature == lastRenderableAttachmentsSignature {
                 debugLog("AgentVoiceController: dropping duplicate renderable attachment batch")
                 return
@@ -255,9 +240,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
                 }
 
                 if let renderer = self.renderer {
-                    renderer.pushAttachments(renderableAttachments)
+                    renderer.pushAttachments(attachments)
                 } else {
-                    self.pendingRenderableAttachmentBatches.append(renderableAttachments)
+                    self.pendingRenderableAttachmentBatches.append(attachments)
                 }
             }
         } else {
@@ -340,25 +325,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             voiceSession?.sendTextClient(text)
         }
 
-        var forwardAttachments: [[String: Any]] = []
-        for attachment in attachments {
-            let attType = attachment["type"] as? String ?? ""
-            if attType == "custom",
-               let data = attachment["data"] as? [String: Any],
-               let dataType = data["type"] as? String,
-               dataType == "send-client-message",
-               let message = data["message"] as? String,
-               !message.isEmpty {
-                debugLog("MobileRendererDelegate: send-client-message -> text_client: \(message.prefix(80))")
-                voiceSession?.sendTextClient(message)
-            } else {
-                forwardAttachments.append(attachment)
-            }
-        }
-
-        if !forwardAttachments.isEmpty {
-            debugLog("MobileRendererDelegate: sending attachments_client with \(forwardAttachments.count) attachment(s)")
-            voiceSession?.sendAttachmentsClient(forwardAttachments)
+        if !attachments.isEmpty {
+            debugLog("MobileRendererDelegate: sending attachments_client with \(attachments.count) attachment(s)")
+            voiceSession?.sendAttachmentsClient(attachments)
         }
     }
 
