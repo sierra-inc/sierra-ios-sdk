@@ -1,9 +1,9 @@
 // Copyright Sierra
 
-import UIKit
 import AVFoundation
+import SierraSDK
+import UIKit
 
-@_spi(ExperimentalVoice)
 public struct AgentVoiceStyle {
     /// Background color for the native voice screen.
     public var backgroundColor: UIColor
@@ -37,7 +37,6 @@ public struct AgentVoiceStyle {
 }
 
 /// Configuration for `AgentVoiceController`.
-@_spi(ExperimentalVoice)
 public struct AgentVoiceControllerOptions {
     /// Name for this voice agent, displayed as the navigation item title.
     public let name: String
@@ -90,7 +89,6 @@ public struct AgentVoiceControllerOptions {
 /// (SVP WebSocket), while attachments are rendered by a MobileRendererView
 /// that loads the agent's web bundle directly -- no conversation state, no
 /// credential seeding, no refresh polling.
-@_spi(ExperimentalVoice)
 public class AgentVoiceController: UIViewController, VoiceSessionDelegate, MobileRendererDelegate {
     private let agent: Agent
     private var options: AgentVoiceControllerOptions
@@ -464,11 +462,12 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         controlsContainer.addSubview(muteButton)
 
         endButton.translatesAutoresizingMaskIntoConstraints = false
-        endButton.setImage(UIImage(systemName: "phone.down.fill"), for: .normal)
+        endButton.setImage(UIImage(systemName: "xmark"), for: .normal)
         endButton.tintColor = .white
         endButton.backgroundColor = controlsColor
         endButton.layer.cornerRadius = controlButtonSize / 2
         endButton.clipsToBounds = true
+        endButton.accessibilityLabel = "Close conversation"
         endButton.addTarget(self, action: #selector(endTapped), for: .touchUpInside)
         controlsContainer.addSubview(endButton)
 
@@ -662,7 +661,6 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 }
 
 /// Callbacks for voice session lifecycle events.
-@_spi(ExperimentalVoice)
 public protocol VoiceCallbacks: AnyObject {
     func onVoiceEnded()
     func onVoiceError(error: Error)

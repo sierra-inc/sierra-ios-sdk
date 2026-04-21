@@ -226,7 +226,7 @@ public struct ChatStyleLayout {
 public let DEFAULT_CHAT_STYLE_LAYOUT = ChatStyleLayout()
 
 extension UIColor {
-    func toHex() -> String? {
+    package func toHex() -> String? {
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0

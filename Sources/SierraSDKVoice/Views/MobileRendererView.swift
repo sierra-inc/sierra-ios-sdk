@@ -1,5 +1,6 @@
 // Copyright Sierra
 
+import SierraSDK
 import UIKit
 import WebKit
 
@@ -17,7 +18,6 @@ private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
 }
 
 /// Callbacks for interactive content events (e.g., user taps a flight card).
-@_spi(ExperimentalVoice)
 public protocol MobileRendererDelegate: AnyObject {
     /// Called when a rendered component sends a message via the web bundle's
     /// sendMessage callback (e.g., user selects a flight option).
@@ -31,7 +31,6 @@ public protocol MobileRendererDelegate: AnyObject {
     func mobileRenderer(_ renderer: MobileRendererView, didEncounterError error: Error)
 }
 
-@_spi(ExperimentalVoice)
 public extension MobileRendererDelegate {
     func mobileRenderer(_ renderer: MobileRendererView, didEncounterError error: Error) {}
 }
@@ -52,7 +51,6 @@ public extension MobileRendererDelegate {
 /// // When SVP delivers attachment JSON:
 /// renderer.pushAttachments(attachmentDicts)
 /// ```
-@_spi(ExperimentalVoice)
 public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHandler {
     private var webView: WKWebView!
     private var isReady = false
@@ -69,7 +67,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         super.init(frame: .zero)
         setupWebView()
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("Unreachable")
     }

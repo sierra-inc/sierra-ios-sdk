@@ -1,6 +1,7 @@
 // Copyright Sierra
 
 import Foundation
+import SierraSDK
 
 /// Defines callbacks emitted by `SVPTransport`.
 ///

@@ -21,10 +21,6 @@ public struct AgentConfig: Equatable {
     var url: String {
         return "\(apiHost.embedBaseURL)/agent/\(token)/mobile"
     }
-
-    var conversationRendererURL: String {
-        return "\(apiHost.embedBaseURL)/agent/\(token)/mobile-renderer"
-    }
 }
 
 public enum AgentAPIHost: String {
@@ -34,7 +30,7 @@ public enum AgentAPIHost: String {
     case staging = "staging"
     case local = "local"
 
-    var apiBaseURL: String {
+    package var apiBaseURL: String {
         switch self {
         case .prod:
             return "https://api.sierra.chat"
@@ -49,18 +45,7 @@ public enum AgentAPIHost: String {
         }
     }
 
-    /// Voice/SVP endpoints are served on a separate port in local dev.
-    /// In production, voice shares the same host as the API.
-    var voiceBaseURL: String {
-        switch self {
-        case .local:
-            return "https://sierra.codes:8084"
-        default:
-            return apiBaseURL
-        }
-    }
-
-    var embedBaseURL: String {
+    package var embedBaseURL: String {
         switch self {
         case .prod:
             return "https://sierra.chat"
@@ -78,7 +63,7 @@ public enum AgentAPIHost: String {
 
 public class Agent {
     private let api: AgentAPI
-    let config: AgentConfig
+    package let config: AgentConfig
     private let storage: ConversationStorage
 
     init(config: AgentConfig) {
@@ -105,7 +90,7 @@ public class Agent {
     }
 }
 
-func getUserAgent(isWebView: Bool) -> String {
+package func getUserAgent(isWebView: Bool) -> String {
     let hostAppIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
     let hostAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
     let iosModel = UIDevice.current.model

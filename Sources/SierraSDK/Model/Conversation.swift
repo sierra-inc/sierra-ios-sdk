@@ -118,7 +118,7 @@ extension ConversationTransfer {
     }
 }
 
-func debugLog(_ message: String) {
+package func debugLog(_ message: String) {
     #if DEBUG
     debugPrint(message)
     #endif

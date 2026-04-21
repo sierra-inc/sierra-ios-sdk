@@ -2,6 +2,7 @@
 
 import AVFoundation
 import Foundation
+import SierraSDK
 
 /// Defines callbacks emitted by `VoiceSessionManager` during a voice session lifecycle.
 ///
@@ -10,7 +11,6 @@ import Foundation
 /// - credentials/session metadata required by the host
 /// - incoming attachment payloads from the server
 /// - terminal events and surfaced errors
-@_spi(ExperimentalVoice)
 public protocol VoiceSessionDelegate: AnyObject {
     func voiceSession(_ session: VoiceSessionManager, didReceiveCredentials conversationID: String, encryptionKey: String)
     func voiceSession(_ session: VoiceSessionManager, didReceiveAttachments attachments: [[String: Any]])
@@ -28,7 +28,6 @@ public protocol VoiceSessionDelegate: AnyObject {
 ///
 /// The manager owns session lifecycle and coordination state, and forwards
 /// relevant events to `VoiceSessionDelegate`.
-@_spi(ExperimentalVoice)
 public class VoiceSessionManager: NSObject {
     public enum State {
         case connecting

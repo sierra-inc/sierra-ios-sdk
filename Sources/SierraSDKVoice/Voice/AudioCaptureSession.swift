@@ -2,6 +2,7 @@
 
 import AVFoundation
 import Foundation
+import SierraSDK
 
 /// Manages microphone capture and upstream audio preprocessing.
 ///

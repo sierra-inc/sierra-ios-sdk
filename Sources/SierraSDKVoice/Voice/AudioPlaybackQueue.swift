@@ -2,6 +2,7 @@
 
 import AVFoundation
 import Foundation
+import SierraSDK
 
 /// Manages buffered playback of server-provided audio chunks.
 ///
