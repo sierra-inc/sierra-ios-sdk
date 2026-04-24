@@ -28,8 +28,9 @@ public struct AgentChatControllerOptions {
     /// Name for this virtual agent, displayed as the navigation item title.
     public let name: String
 
-    /// Use chat interface strings configured on the server (greeting, error messages, etc.).
-    /// When enabled, server-configured strings take precedence over local string options.
+    /// Use chat interface strings configured on the server (greeting, error messages, etc.),
+    /// including server-managed locale/direction settings for those strings.
+    /// When enabled, server-configured values take precedence over local string options.
     public var useConfiguredChatStrings: Bool = false
 
     /// Use styling configured on the server (colors, typography, logo, etc.).
@@ -149,12 +150,18 @@ public struct AgentChatControllerOptions {
     /// value is used.
     public var messageLabelPlacement: MessageLabelPlacement = .default
 
+    /// Explicitly set whether or not to auto-detect locale-specific chat strings and text direction
+    /// from the conversation locale.
+    public var autoDetectChatStrings: Bool?
+
     /// Explicitly set the text direction of the chat window.
     /// - `.ltr`: Forces the chat window to use a left-to-right language layout.
     /// - `.rtl`: Forces the chat window to use a right-to-left language layout.
     /// - `.auto`: Text direction is automatically configured from the conversation locale.
-    /// When nil and useConfiguredStyle is true, the server-configured value is used.
-    /// Otherwise defaults to left-to-right.
+    /// When nil, automatically determined from locale if auto-detection is active --
+    /// either via `autoDetectChatStrings` or the server's Agent Studio configuration
+    /// when `useConfiguredChatStrings` is true. Otherwise falls back to the server
+    /// value when `useConfiguredChatStrings` is true, or left-to-right.
     public var textDirection: TextDirection?
 
     /// Menu label for the conversation transcript saving item.
@@ -199,6 +206,32 @@ public struct AgentChatControllerOptions {
     }
 }
 
+private extension AgentChatControllerOptions {
+    // A baseline instance with the hardcoded English defaults, used to detect which fields the
+    // caller has actually customized. When locale auto-detect or server-configured chat strings are
+    // enabled, any field still equal to its default is omitted so locale defaults or server values
+    // can take effect.
+    static let defaults = AgentChatControllerOptions(name: "")
+
+    var shouldOmitDefaultChatStrings: Bool {
+        autoDetectChatStrings == true || useConfiguredChatStrings
+    }
+
+    var hasCustomGreetingMessage: Bool {
+        greetingMessage != Self.defaults.greetingMessage
+    }
+
+    var shouldUseGreetingMessageAsCustomGreeting: Bool {
+        if greetingMessage.isEmpty {
+            return false
+        }
+        if !shouldOmitDefaultChatStrings {
+            return true
+        }
+        return hasCustomGreetingMessage
+    }
+}
+
 extension AgentChatControllerOptions {
     func toQueryItems() -> [URLQueryItem] {
         var queryItems = [URLQueryItem]()
@@ -219,6 +252,31 @@ extension AgentChatControllerOptions {
         ]
         if let showTimestamps { brand["showTimestamps"] = showTimestamps }
         if let showSpeakerLabels { brand["showBotName"] = showSpeakerLabels }
+        // If locale auto-detect or server-configured chat strings are enabled, remove any messages
+        // that are set to their default value so server-configured values or locale defaults can win.
+        if shouldOmitDefaultChatStrings {
+            if !hasCustomGreetingMessage {
+                brand.removeValue(forKey: "greetingMessage")
+            }
+            if errorMessage == Self.defaults.errorMessage {
+                brand.removeValue(forKey: "errorMessage")
+            }
+            if humanAgentTransferWaitingMessage == Self.defaults.humanAgentTransferWaitingMessage {
+                brand.removeValue(forKey: "agentTransferWaitingMessage")
+            }
+            if humanAgentTransferQueueSizeMessage == Self.defaults.humanAgentTransferQueueSizeMessage {
+                brand.removeValue(forKey: "agentTransferQueueSizeMessage")
+            }
+            if humanAgentTransferQueueNextMessage == Self.defaults.humanAgentTransferQueueNextMessage {
+                brand.removeValue(forKey: "agentTransferQueueNextMessage")
+            }
+            if humanAgentTransferJoinedMessage == Self.defaults.humanAgentTransferJoinedMessage {
+                brand.removeValue(forKey: "agentJoinedMessage")
+            }
+            if humanAgentTransferLeftMessage == Self.defaults.humanAgentTransferLeftMessage {
+                brand.removeValue(forKey: "agentLeftMessage")
+            }
+        }
         do {
             let brandData = try JSONSerialization.data(withJSONObject: brand, options: [])
             if let brandJSON = String(data: brandData, encoding: .utf8) {
@@ -231,12 +289,15 @@ extension AgentChatControllerOptions {
         }
 
         // Subset of the ChatUiStrings type from chat/ui-strings.ts
-        let chatInterfaceStrings: [String: Any] = [
+        var chatInterfaceStrings: [String: Any] = [
             "inputPlaceholder": inputPlaceholder,
             "disclosure": disclosure ?? "",
             "conversationEndedMessage": conversationEndedMessage,
             "newChatButtonLabel": newChatButtonLabel,
         ]
+        if shouldOmitDefaultChatStrings, newChatButtonLabel == Self.defaults.newChatButtonLabel {
+            chatInterfaceStrings.removeValue(forKey: "newChatButtonLabel")
+        }
         do {
             let chatInterfaceStringsData = try JSONSerialization.data(withJSONObject: chatInterfaceStrings, options: [])
             if let chatInterfaceStringsJSON = String(data: chatInterfaceStringsData, encoding: .utf8) {
@@ -305,6 +366,15 @@ extension AgentChatControllerOptions {
             queryItems.append(URLQueryItem(name: "useConfiguredStyle", value: "true"))
         }
 
+        if let autoDetectChatStrings {
+            queryItems.append(
+                URLQueryItem(
+                    name: "autoDetectChatStrings",
+                    value: autoDetectChatStrings ? "true" : "false"
+                )
+            )
+        }
+
         if let textDirection = textDirection {
             queryItems.append(URLQueryItem(name: "textDirection", value: textDirection.rawValue))
         }
@@ -345,7 +415,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         // but it now also affects the API, so it's in ConversationOptions. Read it from both places
         // so that old clients don't need to change anything.
         var conversationOptions = options.conversationOptions
-        if !options.greetingMessage.isEmpty && conversationOptions?.customGreeting == nil {
+        if options.shouldUseGreetingMessageAsCustomGreeting && conversationOptions?.customGreeting == nil {
             if conversationOptions == nil {
                 conversationOptions = ConversationOptions()
             }
