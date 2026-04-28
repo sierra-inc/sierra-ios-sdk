@@ -75,7 +75,7 @@ public class Agent {
         )
     }
 
-    func getStorage() -> ConversationStorage {
+    package func getStorage() -> ConversationStorage {
         return storage
     }
 

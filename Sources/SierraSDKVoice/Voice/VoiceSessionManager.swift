@@ -19,6 +19,31 @@ public protocol VoiceSessionDelegate: AnyObject {
     func voiceSessionDidEnd(_ session: VoiceSessionManager)
 }
 
+/// Canonical SVP close reasons understood by the Sierra Voice Protocol server.
+///
+/// The `rawValue` is the wire string sent on the SVP `close` message.
+public enum AgentVoiceCloseReason: String {
+    case error = "error"
+    case normal = "normal"
+    case transferred = "transferred"
+    case continueInChat = "continue_in_chat"
+}
+
+/// Optional hint sent on the SVP `open` message to describe *why* the client
+/// is resuming an existing conversation. Absence means a plain resume (e.g. a
+/// network-reconnect during an active voice session) and produces no side
+/// effects beyond rehydration.
+///
+/// The `rawValue` is the wire string sent on the SVP `open` message's
+/// `resumeReason` field.
+public enum AgentVoiceResumeReason: String {
+    /// The client is resuming after a prior voice→chat handoff (the previous
+    /// voice session closed with `AgentVoiceCloseReason.continueInChat`).
+    /// The server will emit a `continue-in-voice` client event on the first
+    /// agent turn so the agent can greet the user.
+    case continueInVoice = "continue_in_voice"
+}
+
 /// Coordinates an end-to-end voice session.
 ///
 /// `VoiceSessionManager` composes and orchestrates:
@@ -51,6 +76,8 @@ public class VoiceSessionManager: NSObject {
 
     private let config: AgentConfig
     private let conversationId: String
+    private let resumeConversation: Bool
+    private let resumeReason: AgentVoiceResumeReason?
     private let disableInterruptions: Bool
     private let locale: Locale
     private let agentParameters: [String: String]
@@ -86,6 +113,8 @@ public class VoiceSessionManager: NSObject {
     public init(
         config: AgentConfig,
         conversationId: String = UUID().uuidString,
+        resumeConversation: Bool = false,
+        resumeReason: AgentVoiceResumeReason? = nil,
         disableInterruptions: Bool = false,
         locale: Locale = .current,
         agentParameters: [String: String] = [:],
@@ -95,6 +124,8 @@ public class VoiceSessionManager: NSObject {
     ) {
         self.config = config
         self.conversationId = conversationId
+        self.resumeConversation = resumeConversation
+        self.resumeReason = resumeReason
         self.disableInterruptions = disableInterruptions
         self.locale = locale
         self.agentParameters = agentParameters
@@ -124,7 +155,16 @@ public class VoiceSessionManager: NSObject {
         transport?.connect()
     }
 
-    public func disconnect(sendCloseMessage: Bool = true, closeReason: String = "normal") {
+    public func disconnect(sendCloseMessage: Bool = true, closeReason: AgentVoiceCloseReason = .normal) {
+        disconnect(sendCloseMessage: sendCloseMessage, rawCloseReason: closeReason.rawValue)
+    }
+
+    @available(*, deprecated, message: "Use disconnect(sendCloseMessage:closeReason:) with AgentVoiceCloseReason instead")
+    public func disconnect(sendCloseMessage: Bool = true, closeReason: String) {
+        disconnect(sendCloseMessage: sendCloseMessage, rawCloseReason: closeReason)
+    }
+
+    private func disconnect(sendCloseMessage: Bool, rawCloseReason: String) {
         sessionSync {
             isSessionRunning = false
             hasDeliveredSessionInfo = false
@@ -133,7 +173,7 @@ public class VoiceSessionManager: NSObject {
         }
         audioCaptureSession?.resetListeningPauseState()
         stopAudio()
-        transport?.disconnect(sendCloseMessage: sendCloseMessage, closeReason: closeReason)
+        transport?.disconnect(sendCloseMessage: sendCloseMessage, closeReason: rawCloseReason)
         setState(.ended)
     }
 
@@ -273,7 +313,14 @@ public class VoiceSessionManager: NSObject {
             "locale": localeIdentifier,
             "enableText": enableText,
             "forwardAgentAttachments": forwardAgentAttachments,
+            "enableSessionInfo": true,
         ]
+        if resumeConversation {
+            subMsg["resumeConversation"] = true
+        }
+        if let resumeReason {
+            subMsg["resumeReason"] = resumeReason.rawValue
+        }
         if !agentParameters.isEmpty {
             subMsg["agentParameters"] = agentParameters
             let sortedKeys = agentParameters.sorted { $0.key < $1.key }.map(\.key).joined(separator: ", ")
@@ -325,7 +372,7 @@ public class VoiceSessionManager: NSObject {
             disconnect(sendCloseMessage: true)
             delegate?.voiceSessionDidEnd(self)
         case "transfer":
-            disconnect(sendCloseMessage: true, closeReason: "transferred")
+            disconnect(sendCloseMessage: true, closeReason: .transferred)
             delegate?.voiceSessionDidEnd(self)
         default:
             if type.isEmpty {
@@ -426,7 +473,7 @@ public class VoiceSessionManager: NSObject {
     private func endSessionForExternalAudioInterruption(reason: String) {
         guard sessionSync({ isSessionRunning }) else { return }
         debugLog("SVP: Ending session due to external audio interruption (\(reason))")
-        disconnect(sendCloseMessage: true, closeReason: reason)
+        disconnect(sendCloseMessage: true, rawCloseReason: reason)
         delegate?.voiceSessionDidEnd(self)
     }
 

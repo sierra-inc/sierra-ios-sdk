@@ -204,6 +204,28 @@ public struct AgentChatControllerOptions {
     public init(name: String) {
         self.name = name
     }
+
+    // MARK: - SDK-internal options
+    //
+    // These options are configured by `AgentVoiceChatCoordinator` and are not part of the
+    // public SDK surface. To opt into unified voice/chat flows, use the coordinator rather
+    // than setting these directly.
+
+    /// When true, shows a native navigation-bar button in the chat title bar that lets the
+    /// user reconnect to voice. The coordinator sets this only when the conversation
+    /// originally started in voice and has been continued in chat.
+    package var canReconnectToVoice: Bool = false
+
+    /// Label used for the reconnect-voice button.
+    package var reconnectVoiceLabel: String = "Reconnect voice"
+
+    /// Callback invoked when the reconnect-voice button is tapped.
+    package var onReconnectVoice: (() -> Void)?
+
+    /// Invoked when the conversation ends, separate from the host's
+    /// `conversationCallbacks.onConversationEnded` so the coordinator can clear its own
+    /// state without interposing on the host's callbacks.
+    package var onConversationEnded: (() -> Void)?
 }
 
 private extension AgentChatControllerOptions {
@@ -403,6 +425,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private var loadingSpinner: UIActivityIndicatorView?
     private weak var optionsConversationCallbacks: ConversationCallbacks?
     private var requestEndConversationEnabled = false
+    private var conversationEnded = false
     private var showingConversationList = false
     private var isPageVisible = false
     private var lifecycleObservers: [NSObjectProtocol] = []
@@ -643,8 +666,13 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
     private func updateActionMenu() {
         if showingConversationList {
-            navigationItem.rightBarButtonItem = nil
+            navigationItem.rightBarButtonItems = nil
             return
+        }
+
+        var rightItems: [UIBarButtonItem] = []
+        if !conversationEnded, let reconnectVoiceButton = makeReconnectVoiceButton() {
+            rightItems.append(reconnectVoiceButton)
         }
 
         var menuItems: [UIMenuElement] = []
@@ -669,8 +697,21 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         if !menuItems.isEmpty {
             let menuButton = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), style: .plain, target: self, action: nil)
             menuButton.menu = UIMenu(children: menuItems)
-            navigationItem.rightBarButtonItem = menuButton
+            rightItems.append(menuButton)
         }
+        navigationItem.rightBarButtonItems = rightItems.isEmpty ? nil : rightItems
+    }
+
+    private func makeReconnectVoiceButton() -> UIBarButtonItem? {
+        guard options.canReconnectToVoice else { return nil }
+        return UIBarButtonItem(
+            primaryAction: UIAction(
+                title: options.reconnectVoiceLabel,
+                image: UIImage(systemName: "waveform")
+            ) { [weak self] _ in
+                self?.options.onReconnectVoice?()
+            }
+        )
     }
 
     // MARK: - WKScriptMessageHandler
@@ -719,6 +760,9 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     optionsConversationCallbacks?.onExternalAgentJoin(externalConversationID: externalConversationID, externalAgentID: externalAgentID)
                 case "onEndChat":
                     optionsConversationCallbacks?.onConversationEnded()
+                    options.onConversationEnded?()
+                    conversationEnded = true
+                    updateActionMenu()
                 case "onShowConversationList":
                     showingConversationList = true
                     updateNavigationItems()

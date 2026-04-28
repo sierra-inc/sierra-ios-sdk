@@ -78,7 +78,7 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         receiveMessages()
     }
 
-    func disconnect(sendCloseMessage: Bool = true, closeReason: String = "normal") {
+    func disconnect(sendCloseMessage: Bool = true, closeReason: String = AgentVoiceCloseReason.normal.rawValue) {
         isRunning = false
         if sendCloseMessage {
             sendClose(reason: closeReason) { [weak self] in
@@ -150,7 +150,7 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         }
     }
 
-    private func sendClose(reason: String = "normal", completion: (() -> Void)? = nil) {
+    private func sendClose(reason: String = AgentVoiceCloseReason.normal.rawValue, completion: (() -> Void)? = nil) {
         let msg: [String: Any] = [
             "type": "close",
             "msgNum": nextMsgNum(),

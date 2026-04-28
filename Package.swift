@@ -44,6 +44,6 @@ let package = Package(
         ),
         .testTarget(
             name: "SierraSDKTests",
-            dependencies: ["SierraSDK"]),
+            dependencies: ["SierraSDK", "SierraSDKVoice"]),
     ]
 )

@@ -7,7 +7,7 @@ import Foundation
 /// - `none`: No storage, all operations are no-ops
 /// - `memory`: In-memory cache only, state lost on app restart
 /// - `disk`: In-memory cache backed by UserDefaults, state survives app restart
-class ConversationStorage {
+package class ConversationStorage {
     private let mode: PersistenceMode
     private let storageKey: String
     private var cache: [String: String] = [:]
@@ -27,7 +27,7 @@ class ConversationStorage {
     /// Get a value from storage.
     /// - Parameter key: The key to look up
     /// - Returns: The stored value, or nil if not found or in `none` mode
-    func getItem(_ key: String) -> String? {
+    package func getItem(_ key: String) -> String? {
         if mode == .none { return nil }
         return cache[key]
     }
@@ -36,7 +36,7 @@ class ConversationStorage {
     /// - Parameters:
     ///   - key: The key to store under
     ///   - value: The value to store
-    func setItem(_ key: String, _ value: String) {
+    package func setItem(_ key: String, _ value: String) {
         guard mode != .none else { return }
         cache[key] = value
         if mode == .disk {

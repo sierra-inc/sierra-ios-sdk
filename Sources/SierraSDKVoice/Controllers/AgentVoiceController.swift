@@ -60,6 +60,13 @@ public struct AgentVoiceControllerOptions {
     /// Defaults to the current device locale.
     public var locale: Locale = .current
 
+    /// Client-side SVP conversation identifier used to resume a prior voice session. When nil, a
+    /// new identifier is generated when the controller starts the session.
+    public var voiceConversationID: String?
+
+    /// When true, requests that SVP resume the voice session identified by `voiceConversationID`.
+    public var resumeConversation: Bool = false
+
     /// When true, mutes microphone capture while the agent is speaking.
     /// Prevents speaker audio from being picked up by the mic and
     /// misinterpreted as a user interruption.
@@ -81,6 +88,29 @@ public struct AgentVoiceControllerOptions {
         get { voiceAgentParameters }
         set { voiceAgentParameters = newValue }
     }
+
+    // MARK: - SDK-internal options
+    //
+    // These options are configured by `AgentVoiceChatCoordinator` and are not part of the public
+    // SDK surface. To opt into unified voice/chat flows, use the coordinator rather than setting
+    // these directly.
+
+    /// When true, shows a navigation-bar button that lets the user switch from voice to chat
+    /// without ending the conversation. Tapping the button disconnects the SVP session with the
+    /// `continue_in_chat` close reason and invokes `onSwitchToChat`.
+    internal var canSwitchToChat: Bool = false
+
+    /// Accessibility label and (when an icon is unavailable) title used for the switch-to-chat
+    /// button.
+    internal var switchToChatLabel: String = "Continue in chat"
+
+    /// Callback invoked when the user taps the switch-to-chat button.
+    internal var onSwitchToChat: (() -> Void)?
+
+    /// Optional hint describing why the client is resuming. Only meaningful when
+    /// `resumeConversation` is true; when set, the server emits a `continue-in-voice` client event
+    /// so the agent can greet the user back to voice.
+    internal var resumeReason: AgentVoiceResumeReason?
 
 }
 
@@ -105,7 +135,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private let placeholderWaveformIcon = UIImageView()
     private let placeholderLabel = UILabel()
     private let loadingContainer = UIView()
-    private let loadingIndicator = UIActivityIndicatorView(style: .medium)
+    private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let errorBannerView = UIView()
     private let errorBannerLabel = UILabel()
 
@@ -124,6 +154,16 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         let title = (trimmedTitleBarMessage?.isEmpty == false) ? trimmedTitleBarMessage! : options.name
         super.init(nibName: nil, bundle: nil)
         navigationItem.title = title
+        if options.canSwitchToChat {
+            navigationItem.rightBarButtonItem = UIBarButtonItem(
+                primaryAction: UIAction(
+                    title: options.switchToChatLabel,
+                    image: UIImage(systemName: "bubble.left.and.bubble.right")
+                ) { [weak self] _ in
+                    self?.switchToChatTapped()
+                }
+            )
+        }
         updateNavigationBarAppearance()
     }
 
@@ -151,19 +191,31 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         super.viewDidDisappear(animated)
         if shouldShutdownVoiceSessionOnDisappear {
             shutdownVoiceSessionIfNeeded()
+            fireDismissedIfNeeded()
         }
     }
 
     deinit {
         shutdownVoiceSessionIfNeeded()
+        fireDismissedIfNeeded()
     }
 
     // MARK: - Voice Session
 
     private func startVoiceSession() {
         let voiceAgentParameters = options.voiceAgentParameters ?? [:]
+        let voiceConversationID: String
+        if let id = options.voiceConversationID {
+            voiceConversationID = id
+        } else {
+            assert(!options.resumeConversation, "voiceConversationID must be set when resumeConversation is true")
+            voiceConversationID = UUID().uuidString
+        }
         let session = VoiceSessionManager(
             config: agent.config,
+            conversationId: voiceConversationID,
+            resumeConversation: options.resumeConversation,
+            resumeReason: options.resumeReason,
             disableInterruptions: options.disableInterruptions,
             locale: options.locale,
             agentParameters: voiceAgentParameters,
@@ -176,10 +228,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         updateUI(for: .connecting)
     }
 
-    private func shutdownVoiceSessionIfNeeded() {
+    private func shutdownVoiceSessionIfNeeded(closeReason: AgentVoiceCloseReason = .normal) {
         guard !hasShutdownVoiceSession else { return }
         hasShutdownVoiceSession = true
-        voiceSession?.disconnect()
+        voiceSession?.disconnect(closeReason: closeReason)
         voiceSession = nil
     }
 
@@ -191,6 +243,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     public func voiceSession(_ session: VoiceSessionManager, didReceiveCredentials conversationID: String, encryptionKey: String) {
         debugLog("Voice session received credentials: conversationID=\(conversationID)")
+        DispatchQueue.main.async {
+            self.voiceCallbacks?.onSessionInfoReceived(conversationID: conversationID, encryptionKey: encryptionKey)
+        }
     }
 
     public func voiceSession(_ session: VoiceSessionManager, didChangeState state: VoiceSessionManager.State) {
@@ -273,7 +328,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             self.updateUI(for: .ended)
             guard !self.hasShutdownVoiceSession else { return }
             self.hasShutdownVoiceSession = true
-            self.voiceCallbacks?.onVoiceEnded()
+            self.fireEndedIfNeeded()
         }
     }
 
@@ -388,6 +443,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
         loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
         loadingIndicator.hidesWhenStopped = false
+        loadingIndicator.color = options.voiceStyle.titleBarTextColor
         loadingContainer.addSubview(loadingIndicator)
 
         NSLayoutConstraint.activate([
@@ -406,7 +462,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             placeholderLabel.trailingAnchor.constraint(equalTo: placeholderContainer.trailingAnchor, constant: -24),
 
             loadingContainer.centerXAnchor.constraint(equalTo: placeholderContainer.centerXAnchor),
-            loadingContainer.centerYAnchor.constraint(equalTo: placeholderContainer.centerYAnchor),
+            // Align loading spinner with the waveform icon's center so the load-to-ready
+            // transition has no vertical jump.
+            loadingContainer.centerYAnchor.constraint(equalTo: placeholderContainer.centerYAnchor, constant: -22),
             loadingContainer.leadingAnchor.constraint(greaterThanOrEqualTo: placeholderContainer.leadingAnchor, constant: 24),
             loadingContainer.trailingAnchor.constraint(lessThanOrEqualTo: placeholderContainer.trailingAnchor, constant: -24),
 
@@ -452,24 +510,29 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
         let controlsColor = options.voiceStyle.controlsColor
 
-        muteButton.translatesAutoresizingMaskIntoConstraints = false
-        muteButton.setImage(UIImage(systemName: "mic.fill"), for: .normal)
-        muteButton.tintColor = .white
-        muteButton.backgroundColor = controlsColor
-        muteButton.layer.cornerRadius = controlButtonSize / 2
-        muteButton.clipsToBounds = true
-        muteButton.addTarget(self, action: #selector(muteTapped), for: .touchUpInside)
-        controlsContainer.addSubview(muteButton)
+        configureControlButton(
+            muteButton,
+            systemImage: "mic.fill",
+            backgroundColor: controlsColor,
+            action: #selector(muteTapped)
+        )
 
-        endButton.translatesAutoresizingMaskIntoConstraints = false
-        endButton.setImage(UIImage(systemName: "xmark"), for: .normal)
-        endButton.tintColor = .white
-        endButton.backgroundColor = controlsColor
-        endButton.layer.cornerRadius = controlButtonSize / 2
-        endButton.clipsToBounds = true
-        endButton.accessibilityLabel = "Close conversation"
-        endButton.addTarget(self, action: #selector(endTapped), for: .touchUpInside)
-        controlsContainer.addSubview(endButton)
+        configureControlButton(
+            endButton,
+            systemImage: "xmark",
+            backgroundColor: controlsColor,
+            accessibilityLabel: "Close conversation",
+            action: #selector(endTapped)
+        )
+
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 28
+        stack.addArrangedSubview(muteButton)
+        stack.addArrangedSubview(endButton)
+        controlsContainer.addSubview(stack)
 
         NSLayoutConstraint.activate([
             controlsContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -477,49 +540,62 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             controlsContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             controlsContainer.heightAnchor.constraint(equalToConstant: controlButtonSize + 32),
 
-            muteButton.centerYAnchor.constraint(equalTo: controlsContainer.centerYAnchor),
-            muteButton.trailingAnchor.constraint(equalTo: controlsContainer.centerXAnchor, constant: -14),
-            muteButton.widthAnchor.constraint(equalToConstant: controlButtonSize),
-            muteButton.heightAnchor.constraint(equalToConstant: controlButtonSize),
+            stack.centerXAnchor.constraint(equalTo: controlsContainer.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: controlsContainer.centerYAnchor),
+        ])
+    }
 
-            endButton.centerYAnchor.constraint(equalTo: controlsContainer.centerYAnchor),
-            endButton.leadingAnchor.constraint(equalTo: controlsContainer.centerXAnchor, constant: 14),
-            endButton.widthAnchor.constraint(equalToConstant: controlButtonSize),
-            endButton.heightAnchor.constraint(equalToConstant: controlButtonSize),
+    private func configureControlButton(
+        _ button: UIButton,
+        systemImage: String,
+        backgroundColor: UIColor,
+        accessibilityLabel: String? = nil,
+        action: Selector
+    ) {
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(UIImage(systemName: systemImage), for: .normal)
+        button.tintColor = .white
+        button.backgroundColor = backgroundColor
+        button.layer.cornerRadius = controlButtonSize / 2
+        button.clipsToBounds = true
+        if let accessibilityLabel {
+            button.accessibilityLabel = accessibilityLabel
+        }
+        button.addTarget(self, action: action, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: controlButtonSize),
+            button.heightAnchor.constraint(equalToConstant: controlButtonSize),
         ])
     }
 
     private func updateUI(for state: VoiceSessionManager.State) {
         switch state {
         case .connecting:
-            muteButton.isEnabled = true
-            muteButton.alpha = 1.0
-            endButton.isEnabled = true
-            endButton.alpha = 1.0
+            setControlButtonsEnabled(true)
             setLoadingStateVisible(!hasReceivedInitialGreeting)
             stopWaveformAnimation()
         case .listening:
             markInitialGreetingReceivedIfNeeded()
-            muteButton.isEnabled = true
-            muteButton.alpha = 1.0
-            endButton.isEnabled = true
-            endButton.alpha = 1.0
+            setControlButtonsEnabled(true)
             stopWaveformAnimation()
         case .speaking:
             markInitialGreetingReceivedIfNeeded()
-            muteButton.isEnabled = true
-            muteButton.alpha = 1.0
-            endButton.isEnabled = true
-            endButton.alpha = 1.0
+            setControlButtonsEnabled(true)
             startWaveformAnimation()
         case .ended:
             markInitialGreetingReceivedIfNeeded()
             stopWaveformAnimation()
-            muteButton.isEnabled = false
-            muteButton.alpha = 0.5
-            endButton.isEnabled = false
-            endButton.alpha = 0.5
+            setControlButtonsEnabled(false)
         }
+    }
+
+    private func setControlButtonsEnabled(_ enabled: Bool) {
+        let alpha: CGFloat = enabled ? 1.0 : 0.5
+        for button in [muteButton, endButton] {
+            button.isEnabled = enabled
+            button.alpha = alpha
+        }
+        navigationItem.rightBarButtonItem?.isEnabled = enabled
     }
 
     private func showErrorState(message: String) {
@@ -539,11 +615,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             }
 
             self.loadingIndicator.stopAnimating()
-
-            self.muteButton.isEnabled = false
-            self.muteButton.alpha = 0.5
-            self.endButton.isEnabled = false
-            self.endButton.alpha = 0.5
+            self.setControlButtonsEnabled(false)
         }
     }
 
@@ -584,10 +656,37 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         return false
     }
 
-    private func endConversationForExit() {
+    public func endConversation(closeReason: AgentVoiceCloseReason = .normal) {
+        endConversationForExit(closeReason: closeReason)
+    }
+
+    private func endConversationForExit(closeReason: AgentVoiceCloseReason = .normal) {
         guard !hasShutdownVoiceSession else { return }
-        shutdownVoiceSessionIfNeeded()
+        shutdownVoiceSessionIfNeeded(closeReason: closeReason)
+        fireEndedIfNeeded()
+    }
+
+    private enum ExitCallbackFired {
+        case none, ended, dismissed, switchedToChat
+    }
+    private var exitCallbackFired: ExitCallbackFired = .none
+
+    private func fireEndedIfNeeded() {
+        guard exitCallbackFired == .none else { return }
+        exitCallbackFired = .ended
         voiceCallbacks?.onVoiceEnded()
+    }
+
+    private func fireDismissedIfNeeded() {
+        guard exitCallbackFired == .none else { return }
+        exitCallbackFired = .dismissed
+        voiceCallbacks?.onVoiceDismissed()
+    }
+
+    private func fireSwitchedToChatIfNeeded() {
+        guard exitCallbackFired == .none else { return }
+        exitCallbackFired = .switchedToChat
+        options.onSwitchToChat?()
     }
 
     private func dismissVoiceController() {
@@ -656,12 +755,31 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     }
 
     @objc private func endTapped() {
-        endConversationForExit()
+        endConversation()
+    }
+
+    @objc private func switchToChatTapped() {
+        shutdownVoiceSessionIfNeeded(closeReason: .continueInChat)
+        fireSwitchedToChatIfNeeded()
     }
 }
 
 /// Callbacks for voice session lifecycle events.
 public protocol VoiceCallbacks: AnyObject {
+    /// Called when the user explicitly ends the voice session (e.g., taps the End button).
+    /// Mutually exclusive with `onVoiceDismissed()` -- only one fires per controller lifetime.
     func onVoiceEnded()
+
+    /// Called when the voice view is dismissed without an explicit End tap,
+    /// e.g. the user navigates back, the controller is deallocated, or an error
+    /// state is dismissed. Mutually exclusive with `onVoiceEnded()`.
+    func onVoiceDismissed()
+
     func onVoiceError(error: Error)
+    func onSessionInfoReceived(conversationID: String, encryptionKey: String)
+}
+
+public extension VoiceCallbacks {
+    func onVoiceDismissed() {}
+    func onSessionInfoReceived(conversationID: String, encryptionKey: String) {}
 }
