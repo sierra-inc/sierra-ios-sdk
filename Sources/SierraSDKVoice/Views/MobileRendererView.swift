@@ -214,7 +214,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         }
     }
 
-    /// Shapes posted by `mobile-renderer.tsx` use `attachments` (array). Older bundles may send a single `attachment` with `data`.
+    /// Shapes posted by the mobile renderer web bundle use `attachments` (array). Older bundles may send a single `attachment` with `data`.
     private func svpClientEventAttachments(from body: [String: Any]) -> [[String: Any]] {
         if let attachments = body["attachments"] as? [[String: Any]] {
             return attachments

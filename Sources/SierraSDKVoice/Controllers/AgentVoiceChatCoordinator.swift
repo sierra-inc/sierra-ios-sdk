@@ -33,6 +33,7 @@ public final class AgentVoiceChatCoordinator {
         let conversationID: String?
         let encryptionKey: String?
         let voiceConversationID: String?
+        let voiceResumeToken: String?
     }
 
     public struct Options {
@@ -67,6 +68,7 @@ public final class AgentVoiceChatCoordinator {
     public private(set) var voiceConversationID: String?
     public private(set) var conversationID: String?
     public private(set) var encryptionKey: String?
+    public private(set) var voiceResumeToken: String?
 
     public weak var delegate: AgentVoiceChatCoordinatorDelegate?
 
@@ -89,6 +91,7 @@ public final class AgentVoiceChatCoordinator {
 
         voiceOptions.voiceConversationID = voiceConversationID
         voiceOptions.resumeConversation = shouldResumeConversation
+        voiceOptions.resumeToken = voiceResumeToken
         if shouldResumeConversation {
             voiceOptions.resumeReason = .continueInVoice
         }
@@ -134,6 +137,7 @@ public final class AgentVoiceChatCoordinator {
         voiceConversationID = nil
         conversationID = nil
         encryptionKey = nil
+        voiceResumeToken = nil
         pendingContinueInChat = false
         agent.resetConversation()
     }
@@ -179,6 +183,9 @@ public final class AgentVoiceChatCoordinator {
         if let voiceConversationID {
             state["voiceConversationID"] = voiceConversationID
         }
+        if let voiceResumeToken {
+            state["voiceResumeToken"] = voiceResumeToken
+        }
         return state
     }
 
@@ -188,6 +195,9 @@ public final class AgentVoiceChatCoordinator {
         encryptionKey = persistedState.encryptionKey
         if voiceConversationID == nil {
             voiceConversationID = persistedState.voiceConversationID
+        }
+        if voiceResumeToken == nil {
+            voiceResumeToken = persistedState.voiceResumeToken
         }
     }
 
@@ -219,5 +229,9 @@ extension AgentVoiceChatCoordinator: VoiceCallbacks {
     public func onSessionInfoReceived(conversationID: String, encryptionKey: String) {
         self.conversationID = conversationID
         self.encryptionKey = encryptionKey
+    }
+
+    public func onResumeTokenReceived(token: String) {
+        self.voiceResumeToken = token
     }
 }

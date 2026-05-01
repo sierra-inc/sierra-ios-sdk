@@ -17,6 +17,11 @@ public protocol VoiceSessionDelegate: AnyObject {
     func voiceSession(_ session: VoiceSessionManager, didChangeState state: VoiceSessionManager.State)
     func voiceSession(_ session: VoiceSessionManager, didEncounterError error: Error)
     func voiceSessionDidEnd(_ session: VoiceSessionManager)
+    func voiceSession(_ session: VoiceSessionManager, didReceiveResumeToken token: String)
+}
+
+public extension VoiceSessionDelegate {
+    func voiceSession(_ session: VoiceSessionManager, didReceiveResumeToken token: String) {}
 }
 
 /// Canonical SVP close reasons understood by the Sierra Voice Protocol server.
@@ -83,6 +88,7 @@ public class VoiceSessionManager: NSObject {
     private let agentParameters: [String: String]
     private let enableText: Bool
     private let forwardAgentAttachments: Bool
+    private var resumeToken: String?
     private weak var delegate: VoiceSessionDelegate?
 
     private var transport: SVPTransport?
@@ -100,7 +106,7 @@ public class VoiceSessionManager: NSObject {
 
     private let audioFormat = "linear16"
     private let sampleRate: Double = 24000
-    private let compatibilityDate = "2025-10-20"
+    private let compatibilityDate = "2026-04-29"
     private let preferredIOBufferDuration: Double = 0.02
     private let inputTapDuration: Double = 0.02
 
@@ -115,6 +121,7 @@ public class VoiceSessionManager: NSObject {
         conversationId: String = UUID().uuidString,
         resumeConversation: Bool = false,
         resumeReason: AgentVoiceResumeReason? = nil,
+        resumeToken: String? = nil,
         disableInterruptions: Bool = false,
         locale: Locale = .current,
         agentParameters: [String: String] = [:],
@@ -126,6 +133,7 @@ public class VoiceSessionManager: NSObject {
         self.conversationId = conversationId
         self.resumeConversation = resumeConversation
         self.resumeReason = resumeReason
+        self.resumeToken = resumeToken
         self.disableInterruptions = disableInterruptions
         self.locale = locale
         self.agentParameters = agentParameters
@@ -321,6 +329,9 @@ public class VoiceSessionManager: NSObject {
         if let resumeReason {
             subMsg["resumeReason"] = resumeReason.rawValue
         }
+        if let resumeToken {
+            subMsg["resumeToken"] = resumeToken
+        }
         if !agentParameters.isEmpty {
             subMsg["agentParameters"] = agentParameters
             let sortedKeys = agentParameters.sorted { $0.key < $1.key }.map(\.key).joined(separator: ", ")
@@ -340,6 +351,10 @@ public class VoiceSessionManager: NSObject {
     private func handleMessage(type: String, subMsg: [String: Any], rawText: String) {
         switch type {
         case "opened":
+            if let token = subMsg["resumeToken"] as? String, !token.isEmpty {
+                resumeToken = token
+                delegate?.voiceSession(self, didReceiveResumeToken: token)
+            }
             if setupAudio() {
                 setState(.listening)
             }

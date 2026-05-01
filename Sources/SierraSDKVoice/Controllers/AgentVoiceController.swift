@@ -112,6 +112,11 @@ public struct AgentVoiceControllerOptions {
     /// so the agent can greet the user back to voice.
     internal var resumeReason: AgentVoiceResumeReason?
 
+    /// Server-issued SVP resume token from a prior `opened` message. Sent on the open submessage to
+    /// authorize resuming the existing conversation. Captured and persisted by
+    /// `AgentVoiceChatCoordinator`; do not set directly.
+    internal var resumeToken: String?
+
 }
 
 /// Displays a native voice conversation with an embedded WebView for rendering
@@ -216,6 +221,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             conversationId: voiceConversationID,
             resumeConversation: options.resumeConversation,
             resumeReason: options.resumeReason,
+            resumeToken: options.resumeToken,
             disableInterruptions: options.disableInterruptions,
             locale: options.locale,
             agentParameters: voiceAgentParameters,
@@ -245,6 +251,12 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         debugLog("Voice session received credentials: conversationID=\(conversationID)")
         DispatchQueue.main.async {
             self.voiceCallbacks?.onSessionInfoReceived(conversationID: conversationID, encryptionKey: encryptionKey)
+        }
+    }
+
+    public func voiceSession(_ session: VoiceSessionManager, didReceiveResumeToken token: String) {
+        DispatchQueue.main.async {
+            self.voiceCallbacks?.onResumeTokenReceived(token: token)
         }
     }
 
@@ -777,9 +789,11 @@ public protocol VoiceCallbacks: AnyObject {
 
     func onVoiceError(error: Error)
     func onSessionInfoReceived(conversationID: String, encryptionKey: String)
+    func onResumeTokenReceived(token: String)
 }
 
 public extension VoiceCallbacks {
     func onVoiceDismissed() {}
     func onSessionInfoReceived(conversationID: String, encryptionKey: String) {}
+    func onResumeTokenReceived(token: String) {}
 }

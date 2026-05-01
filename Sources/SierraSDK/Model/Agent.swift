@@ -211,7 +211,7 @@ class AgentAPI {
     }
 }
 
-// Matches the publicChatArguments type from public.go
+// Matches the public chat API request shape.
 struct AgentChatRequest: Encodable {
     let token: String
     let message: String
@@ -225,7 +225,7 @@ struct AgentChatRequest: Encodable {
     let isConversationEnd: Bool?
 }
 
-// Matches the livePollArguments type from live.go
+// Matches the live poll API request shape.
 struct AgentPollRequest: Encodable {
     let token: String
     let state: String?
@@ -234,7 +234,7 @@ struct AgentPollRequest: Encodable {
     let cursor: String?
 }
 
-// Matches pubapi.Event and related (Go)
+// Matches public chat API events.
 struct APIEvent: Decodable {
     let type: String
 

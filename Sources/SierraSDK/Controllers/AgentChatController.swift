@@ -258,7 +258,7 @@ extension AgentChatControllerOptions {
     func toQueryItems() -> [URLQueryItem] {
         var queryItems = [URLQueryItem]()
 
-        // Should match the Brand type from bots/useChat.tsx
+        // Should match the web embed's Brand shape.
         var brand: [String: Any] = [
             "botName": name,
             "greetingMessage": greetingMessage,
@@ -637,7 +637,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
             return
         }
 
-        // Turn config and options into query parameters that mobile.tsx expects
+        // Turn config and options into query parameters that the iOS web embed expects.
         var queryItems = self.options.toQueryItems()
         if let target = self.agent.config.target, !target.isEmpty {
             queryItems.append(URLQueryItem(name: "target", value: target))
@@ -830,7 +830,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                             let base64String = fontData.base64EncodedString()
                             let dataURL = "data:\(customFont.fontType.mimeType);base64,\(base64String)"
 
-                            // Should match the CustomFont type from mobile.tsx.
+                            // Should match the web embed's custom font shape.
                             fontsArray.append([
                                 "fontFamily": customFont.fontFamily,
                                 "fontData": dataURL,

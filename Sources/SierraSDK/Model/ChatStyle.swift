@@ -265,7 +265,7 @@ extension UIColor {
 }
 
 extension ChatStyleColors {
-    // Match the ChatStyle.colors type from ui/chat/chat.tsx.
+    // Match the web embed's ChatStyle.colors shape.
     func toJSON() -> [String: String?] {
         var json = [
             "background": backgroundColor.toHex(),
@@ -311,7 +311,7 @@ extension ChatStyle {
         var json: [String: Any] = [
             "colors": colors.toJSON(),
         ]
-        // Match the ChatStyle type from ui/chat/chat.tsx - serialize as "type"
+        // Match the web embed's ChatStyle shape: serialize typography as "type".
         if let typography = typography {
             json["type"] = typography.toJSON()
         }
