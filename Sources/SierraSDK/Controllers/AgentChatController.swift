@@ -514,6 +514,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         // stored conversation state synchronously during init.
         addStorageUserScript(to: contentController)
 
+        applyAppBoundDomainsConfig(configuration)
         webView = CustomWebView(frame: .zero, configuration: configuration)
         webView.backgroundColor = options.chatStyle.colors.backgroundColor
         webView.isOpaque = true

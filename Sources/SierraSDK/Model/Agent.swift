@@ -2,6 +2,7 @@
 
 import Foundation
 import UIKit
+import WebKit
 
 public struct AgentConfig: Equatable {
     public let token: String
@@ -100,6 +101,12 @@ package func getUserAgent(isWebView: Bool) -> String {
         userAgent += " WebView"
     }
     return userAgent
+}
+
+package func applyAppBoundDomainsConfig(_ configuration: WKWebViewConfiguration) {
+    if Bundle.main.object(forInfoDictionaryKey: "WKAppBoundDomains") != nil {
+        configuration.limitsNavigationsToAppBoundDomains = true
+    }
 }
 
 @available(*, deprecated)

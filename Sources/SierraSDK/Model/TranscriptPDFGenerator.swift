@@ -13,7 +13,9 @@ class TranscriptPDFGenerator: NSObject, WKNavigationDelegate {
     }
 
     private lazy var webView: WKWebView = {
-        let webView = WKWebView(frame: CGRect(origin: .zero, size: CGSize(width: 600, height: 200)))
+        let configuration = WKWebViewConfiguration()
+        applyAppBoundDomainsConfig(configuration)
+        let webView = WKWebView(frame: CGRect(origin: .zero, size: CGSize(width: 600, height: 200)), configuration: configuration)
         webView.navigationDelegate = self
         return webView
     }()

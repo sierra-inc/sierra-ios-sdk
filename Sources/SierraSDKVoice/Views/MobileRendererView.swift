@@ -81,6 +81,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         scriptMessageHandler = handler
         contentController.add(handler, name: "chatHandler")
 
+        applyAppBoundDomainsConfig(configuration)
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.backgroundColor = options.voiceStyle.backgroundColor
         webView.isOpaque = false
