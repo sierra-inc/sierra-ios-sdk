@@ -127,6 +127,11 @@ public struct ChatStyleColors {
     /// The color of the "Start new chat" button text.
     public let newChatButton: UIColor?
 
+    /// The color of the file upload (attachment) button icon in the chat input. When nil,
+    /// falls back to `userBubble`. Override this when `userBubble` does not contrast well
+    /// with `backgroundColor` in light or dark mode.
+    public let uploadButtonIcon: UIColor?
+
     /// The color of the optional disclosure text that appears before any chat messages.
     @available(*, deprecated)
     public let disclosureText: UIColor
@@ -151,6 +156,7 @@ public struct ChatStyleColors {
                 userBubble: UIColor = .systemBlue,
                 userBubbleText: UIColor = .white,
                 newChatButton: UIColor? = .systemBlue,
+                uploadButtonIcon: UIColor? = nil,
                 disclosureText: UIColor = .secondaryLabel,
                 errorText: UIColor = .systemRed,
                 humanAgentTransferWaitingText: UIColor = .secondaryLabel,
@@ -165,6 +171,7 @@ public struct ChatStyleColors {
         self.userBubble = userBubble
         self.userBubbleText = userBubbleText
         self.newChatButton = newChatButton
+        self.uploadButtonIcon = uploadButtonIcon
         self.disclosureText = disclosureText
         self.errorText = errorText
         self.statusText = humanAgentTransferWaitingText
@@ -284,6 +291,9 @@ extension ChatStyleColors {
         }
         if let newChatButton = newChatButton {
             json["newChatButton"] = newChatButton.toHex()
+        }
+        if let uploadButtonIcon = uploadButtonIcon {
+            json["uploadButtonIcon"] = uploadButtonIcon.toHex()
         }
         return json
     }

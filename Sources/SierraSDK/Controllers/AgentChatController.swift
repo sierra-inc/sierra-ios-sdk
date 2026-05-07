@@ -255,7 +255,7 @@ private extension AgentChatControllerOptions {
 }
 
 extension AgentChatControllerOptions {
-    func toQueryItems() -> [URLQueryItem] {
+    func toQueryItems(conversationState: String? = nil) -> [URLQueryItem] {
         var queryItems = [URLQueryItem]()
 
         // Should match the web embed's Brand shape.
@@ -405,6 +405,10 @@ extension AgentChatControllerOptions {
             queryItems.append(URLQueryItem(name: "userIdentityToken", value: userIdentityToken))
         }
 
+        if let conversationState, !conversationState.isEmpty {
+            queryItems.append(URLQueryItem(name: "state", value: conversationState))
+        }
+
         if enableConversationList {
             queryItems.append(URLQueryItem(name: "enableConversationList", value: "true"))
         }
@@ -422,6 +426,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private var webViewLoaded = false
     private let agent: Agent
     private var options: AgentChatControllerOptions
+    private let conversationState: String?
     private var loadingSpinner: UIActivityIndicatorView?
     private weak var optionsConversationCallbacks: ConversationCallbacks?
     private var requestEndConversationEnabled = false
@@ -430,9 +435,24 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private var isPageVisible = false
     private var lifecycleObservers: [NSObjectProtocol] = []
 
-    public init(agent: Agent, options: AgentChatControllerOptions) {
+    /// Creates a chat controller backed by a WKWebView.
+    ///
+    /// - Parameters:
+    ///   - agent: The Sierra agent to chat with.
+    ///   - options: Long-lived configuration that is safe to reuse across presentations.
+    ///   - conversationState: Optional opaque state token returned by the public Sierra API
+    ///     identifying a specific conversation to resume. Supply this only on the controller
+    ///     instance that should resume that conversation; do not retain it on long-lived
+    ///     configuration, since reusing the same value after the user starts a new
+    ///     conversation will cause that new conversation to be replaced by the original one.
+    public init(
+        agent: Agent,
+        options: AgentChatControllerOptions,
+        conversationState: String? = nil
+    ) {
         self.agent = agent
         self.options = options
+        self.conversationState = conversationState
 
         // The custom greeting was initially a UI-only concept and thus specified via AgentChatControllerOptions,
         // but it now also affects the API, so it's in ConversationOptions. Read it from both places
@@ -639,7 +659,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         }
 
         // Turn config and options into query parameters that the iOS web embed expects.
-        var queryItems = self.options.toQueryItems()
+        var queryItems = self.options.toQueryItems(conversationState: self.conversationState)
         if let target = self.agent.config.target, !target.isEmpty {
             queryItems.append(URLQueryItem(name: "target", value: target))
         }
@@ -863,6 +883,10 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
     private func openExternalURL(_ url: URL) {
         if optionsConversationCallbacks?.onOpenURL(url: url) == true {
+            return
+        }
+
+        if optionsConversationCallbacks?.onLinkClick(url: url) == true {
             return
         }
 

@@ -29,10 +29,15 @@ public protocol MobileRendererDelegate: AnyObject {
 
     /// Called when the renderer encounters a fatal loading/rendering error.
     func mobileRenderer(_ renderer: MobileRendererView, didEncounterError error: Error)
+
+    /// Called when the user taps a link in a rendered attachment that would otherwise be opened
+    /// externally. The host may route the URL in-app or fall back to the system handler.
+    func mobileRenderer(_ renderer: MobileRendererView, didClickLink url: URL)
 }
 
 public extension MobileRendererDelegate {
     func mobileRenderer(_ renderer: MobileRendererView, didEncounterError error: Error) {}
+    func mobileRenderer(_ renderer: MobileRendererView, didClickLink url: URL) {}
 }
 
 /// A UIView that renders agent web bundle content pushed from SVP.
@@ -127,6 +132,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         let backgroundColorHex =
             options.voiceStyle.rendererBackgroundColor?.toHex() ??
             options.voiceStyle.backgroundColor.toHex()
+        queryItems.append(URLQueryItem(name: "supportsLinkClick", value: "true"))
         debugLog(
             "MobileRenderer: Preparing renderer URL base=\(agent.config.conversationRendererURL), target=\(agent.config.target ?? "nil"), backgroundColor=\(backgroundColorHex ?? "nil")"
         )
@@ -259,6 +265,11 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
             )
             debugLog("MobileRenderer: JS bridge reported error: \(reason)")
             delegate?.mobileRenderer(self, didEncounterError: error)
+
+        case "onLinkClick":
+            if let urlString = body["url"] as? String, let url = URL(string: urlString) {
+                delegate?.mobileRenderer(self, didClickLink: url)
+            }
 
         default:
             break

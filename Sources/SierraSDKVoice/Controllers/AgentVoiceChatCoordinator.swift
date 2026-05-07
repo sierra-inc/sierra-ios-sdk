@@ -21,11 +21,22 @@ public protocol AgentVoiceChatCoordinatorDelegate: AnyObject {
 
     /// Called when the voice session encounters an error. Default: no-op.
     func coordinator(_ coordinator: AgentVoiceChatCoordinator, didEncounterVoiceError error: Error)
+
+    /// Called when the voice session receives agent-produced attachments. Hosts can inspect the
+    /// payload and route into native app surfaces.
+    func coordinator(
+        _ coordinator: AgentVoiceChatCoordinator,
+        didReceiveAgentAttachment attachments: [AgentAttachment]
+    )
 }
 
 public extension AgentVoiceChatCoordinatorDelegate {
     func coordinatorVoiceDidEnd(_ coordinator: AgentVoiceChatCoordinator) {}
     func coordinator(_ coordinator: AgentVoiceChatCoordinator, didEncounterVoiceError error: Error) {}
+    func coordinator(
+        _ coordinator: AgentVoiceChatCoordinator,
+        didReceiveAgentAttachment attachments: [AgentAttachment]
+    ) {}
 }
 
 public final class AgentVoiceChatCoordinator {
@@ -224,6 +235,10 @@ extension AgentVoiceChatCoordinator: VoiceCallbacks {
 
     public func onVoiceError(error: Error) {
         delegate?.coordinator(self, didEncounterVoiceError: error)
+    }
+
+    public func didReceiveAgentAttachment(attachments: [AgentAttachment]) {
+        delegate?.coordinator(self, didReceiveAgentAttachment: attachments)
     }
 
     public func onSessionInfoReceived(conversationID: String, encryptionKey: String) {

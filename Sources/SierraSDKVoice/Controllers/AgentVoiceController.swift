@@ -4,6 +4,26 @@ import AVFoundation
 import SierraSDK
 import UIKit
 
+public struct AgentAttachment {
+    public let type: String
+    public let data: [String: Any]
+
+    public init(type: String, data: [String: Any]) {
+        self.type = type
+        self.data = data
+    }
+
+    fileprivate init?(raw: [String: Any]) {
+        guard
+            let type = raw["type"] as? String,
+            let data = raw["data"] as? [String: Any]
+        else {
+            return nil
+        }
+        self.init(type: type, data: data)
+    }
+}
+
 public struct AgentVoiceStyle {
     /// Background color for the native voice screen.
     public var backgroundColor: UIColor
@@ -278,7 +298,6 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             "AgentVoiceController: received \(attachments.count) attachment(s) from SVP, types=\(attachmentTypes), renderer=\(renderer != nil ? "ready" : "nil")"
         )
 
-
         if !attachments.isEmpty {
             let signature = renderableBatchSignature(attachments)
             if let signature, signature == lastRenderableAttachmentsSignature {
@@ -287,7 +306,12 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             }
             lastRenderableAttachmentsSignature = signature
 
+            let agentAttachments = attachments.compactMap(AgentAttachment.init(raw:))
             DispatchQueue.main.async {
+                if !agentAttachments.isEmpty {
+                    self.voiceCallbacks?.didReceiveAgentAttachment(attachments: agentAttachments)
+                }
+
                 if self.rendererFailed {
                     return
                 }
@@ -407,6 +431,13 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             self.renderer?.isHidden = true
             self.placeholderContainer.isHidden = false
         }
+    }
+
+    public func mobileRenderer(_ renderer: MobileRendererView, didClickLink url: URL) {
+        if voiceCallbacks?.onLinkClick(url: url) == true {
+            return
+        }
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
     }
 
     // MARK: - Navigation Bar
@@ -788,12 +819,20 @@ public protocol VoiceCallbacks: AnyObject {
     func onVoiceDismissed()
 
     func onVoiceError(error: Error)
+    func didReceiveAgentAttachment(attachments: [AgentAttachment])
     func onSessionInfoReceived(conversationID: String, encryptionKey: String)
     func onResumeTokenReceived(token: String)
+
+    /// Callback invoked when the user taps a link in a rendered voice attachment. Return `true`
+    /// if the host app handled the link in-app, or `false` to let the SDK fall back to the system
+    /// handler.
+    func onLinkClick(url: URL) -> Bool
 }
 
 public extension VoiceCallbacks {
     func onVoiceDismissed() {}
+    func didReceiveAgentAttachment(attachments: [AgentAttachment]) {}
     func onSessionInfoReceived(conversationID: String, encryptionKey: String) {}
     func onResumeTokenReceived(token: String) {}
+    func onLinkClick(url: URL) -> Bool { false }
 }

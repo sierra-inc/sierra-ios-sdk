@@ -46,9 +46,14 @@ public protocol ConversationCallbacks: AnyObject {
     func onShowConversationList()
     /// Callback invoked when the conversation list is hidden (a conversation is opened or started).
     func onHideConversationList()
+    /// Callback invoked when the customer taps a link in the chat that would otherwise be opened
+    /// externally. Return `true` if the host app handled the link in-app, or `false` to let the
+    /// SDK fall back to the system handler.
+    func onLinkClick(url: URL) -> Bool
+
     /// Callback invoked when the customer taps a URL in the chat that would otherwise be opened
-    /// externally. Return `true` if the host app handled the URL in-app, or `false` to let the SDK
-    /// fall back to the system handler.
+    /// externally.
+    @available(*, deprecated, message: "Use onLinkClick(url:) instead.")
     func onOpenURL(url: URL) -> Bool
 }
 
@@ -66,6 +71,8 @@ public extension ConversationCallbacks {
     }
     func onShowConversationList() {}
     func onHideConversationList() {}
+    func onLinkClick(url: URL) -> Bool { false }
+    @available(*, deprecated, message: "Use onLinkClick(url:) instead.")
     func onOpenURL(url: URL) -> Bool { false }
 }
 
