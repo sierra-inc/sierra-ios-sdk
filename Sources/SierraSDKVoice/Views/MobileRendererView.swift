@@ -178,9 +178,11 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     }
 
     /// Clear all rendered content.
-    public func clearAttachments() {
+    public func clearConversation() {
+        debugLog("MobileRenderer: clearConversation called")
+        pendingAttachments.removeAll()
         webView.evaluateJavaScript(
-            "if (window.sierraMobile?.clearPushedAttachments) { window.sierraMobile.clearPushedAttachments(); }",
+            "if (window.sierraMobile?.clearConversation) { window.sierraMobile.clearConversation(); }",
             completionHandler: nil
         )
     }

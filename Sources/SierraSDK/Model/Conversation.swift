@@ -22,7 +22,32 @@ public struct ConversationOptions {
     public init() { }
 }
 
-public protocol ConversationCallbacks: AnyObject {
+public protocol AgentEventListener: AnyObject {
+    /// Callback invoked when a secret needs to be refreshed. Reply handler should be invoked with one of:
+    /// - a new value for the secret
+    /// - nil if the secret cannot be provided due to a known condition (e.g. the user has signed out)
+    /// - an error if the secret cannot be fetched right now, but the request should be retried.
+    func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void)
+    /// Callback invoked when the customer taps a link in the conversation that would otherwise be
+    /// opened externally. Return `true` if the host app handled the link in-app, or `false` to let
+    /// the SDK fall back to the system handler.
+    func onLinkClick(url: URL) -> Bool
+}
+
+// Default no-op implementations of AgentEventListener, so that clients can
+// implement only the subset that they care about.
+public extension AgentEventListener {
+    func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void) {
+        replyHandler(.success(nil))
+    }
+    func onLinkClick(url: URL) -> Bool {
+        // Bridge legacy ConversationCallbacks adopters that override onOpenURL but have not
+        // migrated to onLinkClick yet.
+        (self as? ConversationCallbacks)?.onOpenURL(url: url) ?? false
+    }
+}
+
+public protocol ConversationCallbacks: AgentEventListener {
     /// Callback invoked when the user chatting with the virtual agent has requested a transfer to an
     /// external agent.
     func onConversationTransfer(transfer: ConversationTransfer)
@@ -37,20 +62,10 @@ public protocol ConversationCallbacks: AnyObject {
     func onConversationEnded()
     /// Callback invoked when a non-Sierra agent joins the conversation.
     func onExternalAgentJoin(externalConversationID: String?, externalAgentID: String?)
-    /// Callback invoked when a secret needs needs to be refreshed. Reply handler should be invoked with one of:
-    /// - a new value for the secret
-    /// - nil if the secret cannot be provided due to a known condition (e.g. the user has signed out)
-    /// - an error if the secret cannot be fetched right now, but the request should be retried.
-    func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void)
     /// Callback invoked when the conversation list is shown.
     func onShowConversationList()
     /// Callback invoked when the conversation list is hidden (a conversation is opened or started).
     func onHideConversationList()
-    /// Callback invoked when the customer taps a link in the chat that would otherwise be opened
-    /// externally. Return `true` if the host app handled the link in-app, or `false` to let the
-    /// SDK fall back to the system handler.
-    func onLinkClick(url: URL) -> Bool
-
     /// Callback invoked when the customer taps a URL in the chat that would otherwise be opened
     /// externally.
     @available(*, deprecated, message: "Use onLinkClick(url:) instead.")
@@ -66,12 +81,8 @@ public extension ConversationCallbacks {
     func onRequestEndConversationEnabledChange(_ enabled: Bool) {}
     func onConversationEnded() {}
     func onExternalAgentJoin(externalConversationID: String?, externalAgentID: String?) {}
-    func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void) {
-        replyHandler(.success(nil))
-    }
     func onShowConversationList() {}
     func onHideConversationList() {}
-    func onLinkClick(url: URL) -> Bool { false }
     @available(*, deprecated, message: "Use onLinkClick(url:) instead.")
     func onOpenURL(url: URL) -> Bool { false }
 }

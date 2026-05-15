@@ -14,6 +14,8 @@ import SierraSDK
 public protocol VoiceSessionDelegate: AnyObject {
     func voiceSession(_ session: VoiceSessionManager, didReceiveCredentials conversationID: String, encryptionKey: String)
     func voiceSession(_ session: VoiceSessionManager, didReceiveAttachments attachments: [[String: Any]])
+    func voiceSessionDidReceiveInitialAudio(_ session: VoiceSessionManager)
+    func voiceSessionDidStartInitialAudioPlayback(_ session: VoiceSessionManager)
     func voiceSession(_ session: VoiceSessionManager, didChangeState state: VoiceSessionManager.State)
     func voiceSession(_ session: VoiceSessionManager, didEncounterError error: Error)
     func voiceSessionDidEnd(_ session: VoiceSessionManager)
@@ -21,6 +23,8 @@ public protocol VoiceSessionDelegate: AnyObject {
 }
 
 public extension VoiceSessionDelegate {
+    func voiceSessionDidReceiveInitialAudio(_ session: VoiceSessionManager) {}
+    func voiceSessionDidStartInitialAudioPlayback(_ session: VoiceSessionManager) {}
     func voiceSession(_ session: VoiceSessionManager, didReceiveResumeToken token: String) {}
 }
 
@@ -98,6 +102,8 @@ public class VoiceSessionManager: NSObject {
     private var playerNode: AVAudioPlayerNode?
     private var isSessionRunning = false
     private var hasDeliveredSessionInfo = false
+    private var hasDeliveredInitialAudioMessage = false
+    private var hasDeliveredInitialAudioPlayback = false
     private var isUserListeningPaused = false
     private var interruptionInProgress = false
     private var audioSessionObservers: [NSObjectProtocol] = []
@@ -157,6 +163,8 @@ public class VoiceSessionManager: NSObject {
         sessionSync {
             isSessionRunning = true
             hasDeliveredSessionInfo = false
+            hasDeliveredInitialAudioMessage = false
+            hasDeliveredInitialAudioPlayback = false
             interruptionInProgress = false
         }
         setState(.connecting)
@@ -176,6 +184,8 @@ public class VoiceSessionManager: NSObject {
         sessionSync {
             isSessionRunning = false
             hasDeliveredSessionInfo = false
+            hasDeliveredInitialAudioMessage = false
+            hasDeliveredInitialAudioPlayback = false
             isUserListeningPaused = false
             interruptionInProgress = false
         }
@@ -192,6 +202,33 @@ public class VoiceSessionManager: NSObject {
     public func sendAttachmentsClient(_ attachments: [[String: Any]]) {
         debugLog("SVP send: attachments_client")
         transport?.send(type: "attachments_client", subMsg: ["attachments": attachments])
+    }
+
+    /// Pushes fresh values into conversation memory mid-call via the SVP
+    /// `memory_update_client` message. The server applies the update via
+    /// `api.UpdateMemory` out-of-band of the voice loop so the current agent
+    /// turn is not interrupted; the agent picks up the new values on its next
+    /// loop iteration.
+    ///
+    /// Pass `nil` (or an empty dictionary) for either map to omit it from the
+    /// wire payload. `secret` values are sensitive: do not log them.
+    public func sendMemoryUpdateClient(secrets: [String: String]? = nil, variables: [String: String]? = nil) {
+        var subMsg: [String: Any] = [:]
+        if let secrets, !secrets.isEmpty {
+            subMsg["secrets"] = secrets
+        }
+        if let variables, !variables.isEmpty {
+            subMsg["variables"] = variables
+        }
+        if subMsg.isEmpty {
+            debugLog("SVP send: memory_update_client skipped (no variables or secrets)")
+            return
+        }
+        // Log keys only, never values.
+        let secretKeys = (secrets ?? [:]).keys.sorted().joined(separator: ", ")
+        let variableKeys = (variables ?? [:]).keys.sorted().joined(separator: ", ")
+        debugLog("SVP send: memory_update_client variableKeys=[\(variableKeys)] secretKeys=[\(secretKeys)]")
+        transport?.send(type: "memory_update_client", subMsg: subMsg)
     }
 
     @discardableResult
@@ -241,7 +278,11 @@ public class VoiceSessionManager: NSObject {
         let playback = AudioPlaybackQueue(sampleRate: sampleRate)
         playback.onDidStartSpeaking = { [weak self] in
             guard let self else { return }
+            let shouldDeliverInitialAudioPlayback = self.markInitialAudioPlaybackDeliveredIfNeeded()
             DispatchQueue.main.async {
+                if shouldDeliverInitialAudioPlayback {
+                    self.delegate?.voiceSessionDidStartInitialAudioPlayback(self)
+                }
                 if self.currentState() == .listening {
                     self.setState(.speaking)
                 }
@@ -371,6 +412,10 @@ public class VoiceSessionManager: NSObject {
         case "audio_server":
             if let audioDataB64 = subMsg["audioData"] as? String,
                let audioData = Data(base64Encoded: audioDataB64) {
+                if !hasDeliveredInitialAudioMessage {
+                    hasDeliveredInitialAudioMessage = true
+                    delegate?.voiceSessionDidReceiveInitialAudio(self)
+                }
                 audioPlaybackQueue?.enqueue(audioData, mark: subMsg["mark"] as? String)
             }
         case "attachments_server":
@@ -547,6 +592,14 @@ extension VoiceSessionManager: SVPTransportDelegate {
 }
 
 private extension VoiceSessionManager {
+    func markInitialAudioPlaybackDeliveredIfNeeded() -> Bool {
+        sessionSync {
+            guard !hasDeliveredInitialAudioPlayback else { return false }
+            hasDeliveredInitialAudioPlayback = true
+            return true
+        }
+    }
+
     func setState(_ newState: State) {
         sessionSync {
             state = newState

@@ -51,6 +51,14 @@ public final class AgentVoiceChatCoordinator {
         public var voiceOptions: AgentVoiceControllerOptions
         public var chatOptions: AgentChatControllerOptions
 
+        /// Shared listener for events that the agent runtime can emit during either a chat or a
+        /// voice conversation (e.g. `onSecretExpiry`, `onLinkClick`). Implement once and the
+        /// coordinator routes the same logic into both surfaces. Hosts that need surface-specific
+        /// behavior can still set `chatOptions.conversationCallbacks` directly; the listener is
+        /// only adapted into chat callbacks when none are provided. Retain this listener in your
+        /// app code for as long as the coordinator may use it.
+        public weak var agentEventListener: AgentEventListener?
+
         /// When true, the voice view includes a navigation-bar button that lets the user switch
         /// from voice to chat without ending the conversation. On tap, the SVP session is closed
         /// with the `continue_in_chat` close reason and the chat view is presented with the
@@ -63,16 +71,27 @@ public final class AgentVoiceChatCoordinator {
         /// greet the user and acknowledge the return to voice.
         public var canReconnectToVoice: Bool = false
 
+        /// When true (and `canSwitchToChat` is also true), the voice session's natural end --
+        /// whether the user taps the End button or the agent ends the conversation server-side --
+        /// is treated like a switch-to-chat: the coordinator fires
+        /// `coordinatorDidRequestShowingChat` instead of `coordinatorVoiceDidEnd`, and the chat
+        /// view opens with the voice transcript seeded. No-op if `canSwitchToChat` is false.
+        public var autoShowChatOnEnd: Bool = true
+
         public init(
             voiceOptions: AgentVoiceControllerOptions,
             chatOptions: AgentChatControllerOptions,
+            agentEventListener: AgentEventListener? = nil,
             canSwitchToChat: Bool = true,
-            canReconnectToVoice: Bool = false
+            canReconnectToVoice: Bool = false,
+            autoShowChatOnEnd: Bool = true
         ) {
             self.voiceOptions = voiceOptions
             self.chatOptions = chatOptions
+            self.agentEventListener = agentEventListener
             self.canSwitchToChat = canSwitchToChat
             self.canReconnectToVoice = canReconnectToVoice
+            self.autoShowChatOnEnd = autoShowChatOnEnd
         }
     }
 
@@ -82,14 +101,17 @@ public final class AgentVoiceChatCoordinator {
     public private(set) var voiceResumeToken: String?
 
     public weak var delegate: AgentVoiceChatCoordinatorDelegate?
+    public weak var agentEventListener: AgentEventListener?
 
     private let agent: Agent
     private let options: Options
     private var pendingContinueInChat = false
+    private var chatCallbacksAdapter: ChatCallbacksAdapter?
 
     public init(agent: Agent, options: Options) {
         self.agent = agent
         self.options = options
+        self.agentEventListener = options.agentEventListener
         restorePersistedConversationState()
     }
 
@@ -111,6 +133,7 @@ public final class AgentVoiceChatCoordinator {
             voiceOptions.onSwitchToChat = { [weak self] in
                 self?.handleSwitchToChat()
             }
+            voiceOptions.endRoutesToChat = options.autoShowChatOnEnd
         }
 
         let voiceController = AgentVoiceController(agent: agent, options: voiceOptions)
@@ -138,6 +161,16 @@ public final class AgentVoiceChatCoordinator {
         // Reconnect-voice tap doesn't try to resume an already-ended chat.
         chatOptions.onConversationEnded = { [weak self] in
             self?.resetConversation()
+        }
+        // Bridge the shared `AgentEventListener` into chat callbacks when the host hasn't set its
+        // own. Hosts that supply `chatOptions.conversationCallbacks` keep full control and the
+        // adapter stays out of the way.
+        if chatOptions.conversationCallbacks == nil, let agentEventListener {
+            let adapter = ChatCallbacksAdapter(listener: agentEventListener)
+            chatCallbacksAdapter = adapter
+            chatOptions.conversationCallbacks = adapter
+        } else {
+            chatCallbacksAdapter = nil
         }
         return AgentChatController(agent: agent, options: chatOptions)
     }
@@ -223,8 +256,36 @@ public final class AgentVoiceChatCoordinator {
     }
 }
 
+/// Bridge that forwards the chat-side `ConversationCallbacks` events the coordinator cares about
+/// (currently just the shared `AgentEventListener` events) to a single shared listener. Used only
+/// when the host did not supply its own `chatOptions.conversationCallbacks`; otherwise the host's
+/// callbacks pass through unchanged.
+private final class ChatCallbacksAdapter: ConversationCallbacks {
+    weak var listener: AgentEventListener?
+
+    init(listener: AgentEventListener) {
+        self.listener = listener
+    }
+
+    func onLinkClick(url: URL) -> Bool {
+        listener?.onLinkClick(url: url) ?? false
+    }
+
+    func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void) {
+        guard let listener else {
+            replyHandler(.success(nil))
+            return
+        }
+        listener.onSecretExpiry(secretName: secretName, replyHandler: replyHandler)
+    }
+}
+
 extension AgentVoiceChatCoordinator: VoiceCallbacks {
     public func onVoiceEnded() {
+        if options.canSwitchToChat && options.autoShowChatOnEnd {
+            handleSwitchToChat()
+            return
+        }
         resetConversation()
         delegate?.coordinatorVoiceDidEnd(self)
     }
@@ -239,6 +300,20 @@ extension AgentVoiceChatCoordinator: VoiceCallbacks {
 
     public func didReceiveAgentAttachment(attachments: [AgentAttachment]) {
         delegate?.coordinator(self, didReceiveAgentAttachment: attachments)
+    }
+
+    public func onLinkClick(url: URL) -> Bool {
+        agentEventListener?.onLinkClick(url: url) ?? false
+    }
+
+    public func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void) {
+        guard let agentEventListener else {
+            // No listener is registered; fall back to the protocol default so the orchestrator
+            // doesn't hang waiting for a reply.
+            replyHandler(.success(nil))
+            return
+        }
+        agentEventListener.onSecretExpiry(secretName: secretName, replyHandler: replyHandler)
     }
 
     public func onSessionInfoReceived(conversationID: String, encryptionKey: String) {

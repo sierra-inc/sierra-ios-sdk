@@ -64,6 +64,66 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(delegate.attachments?.first?.data["deeplink"] as? String, "sierra-test://order/123")
     }
 
+    func testAgentVoiceChatCoordinatorEndRoutesToChatByDefault() {
+        let config = AgentConfig(token: "test-token")
+        let agent = Agent(config: config)
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat")
+            )
+        )
+        let delegate = CapturingVoiceCoordinatorDelegate()
+        coordinator.delegate = delegate
+
+        coordinator.onVoiceEnded()
+
+        XCTAssertEqual(delegate.showChatRequestCount, 1)
+        XCTAssertEqual(delegate.voiceDidEndCount, 0)
+    }
+
+    func testAgentVoiceChatCoordinatorAutoShowChatCanBeDisabled() {
+        let config = AgentConfig(token: "test-token")
+        let agent = Agent(config: config)
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat"),
+                autoShowChatOnEnd: false
+            )
+        )
+        let delegate = CapturingVoiceCoordinatorDelegate()
+        coordinator.delegate = delegate
+
+        coordinator.onVoiceEnded()
+
+        XCTAssertEqual(delegate.voiceDidEndCount, 1)
+        XCTAssertEqual(delegate.showChatRequestCount, 0)
+    }
+
+    func testAgentVoiceChatCoordinatorAutoShowChatRequiresCanSwitchToChat() {
+        let config = AgentConfig(token: "test-token")
+        let agent = Agent(config: config)
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat"),
+                canSwitchToChat: false,
+                autoShowChatOnEnd: true
+            )
+        )
+        let delegate = CapturingVoiceCoordinatorDelegate()
+        coordinator.delegate = delegate
+
+        coordinator.onVoiceEnded()
+
+        XCTAssertEqual(delegate.voiceDidEndCount, 1)
+        XCTAssertEqual(delegate.showChatRequestCount, 0)
+    }
+
     func testConversationStateForwardedAsStateQueryItem() {
         let options = AgentChatControllerOptions(name: "Test")
         let queryItems = options.toQueryItems(conversationState: "abc123")
@@ -84,10 +144,18 @@ final class SierraSDKTests: XCTestCase {
 private final class CapturingVoiceCoordinatorDelegate: AgentVoiceChatCoordinatorDelegate {
     weak var coordinator: AgentVoiceChatCoordinator?
     var attachments: [AgentAttachment]?
+    var showChatRequestCount = 0
+    var voiceDidEndCount = 0
 
-    func coordinatorDidRequestShowingChat(_ coordinator: AgentVoiceChatCoordinator) {}
+    func coordinatorDidRequestShowingChat(_ coordinator: AgentVoiceChatCoordinator) {
+        showChatRequestCount += 1
+    }
 
     func coordinatorDidRequestVoiceReconnect(_ coordinator: AgentVoiceChatCoordinator) {}
+
+    func coordinatorVoiceDidEnd(_ coordinator: AgentVoiceChatCoordinator) {
+        voiceDidEndCount += 1
+    }
 
     func coordinator(
         _ coordinator: AgentVoiceChatCoordinator,

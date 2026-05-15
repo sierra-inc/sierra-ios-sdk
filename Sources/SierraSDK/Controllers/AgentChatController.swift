@@ -882,10 +882,6 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     private func openExternalURL(_ url: URL) {
-        if optionsConversationCallbacks?.onOpenURL(url: url) == true {
-            return
-        }
-
         if optionsConversationCallbacks?.onLinkClick(url: url) == true {
             return
         }

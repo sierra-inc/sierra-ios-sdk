@@ -24,6 +24,9 @@ public struct AgentAttachment {
     }
 }
 
+// AgentEvent attachment type consumed by the native voice layer to reset rendered cards.
+private let clearConversationRendererType = "clear-conversation-renderer"
+
 public struct AgentVoiceStyle {
     /// Background color for the native voice screen.
     public var backgroundColor: UIColor
@@ -37,6 +40,19 @@ public struct AgentVoiceStyle {
     /// Fill color for the mute/end controls.
     public var controlsColor: UIColor
 
+    /// Optional fill color override for the mute button.
+    public var muteButtonColor: UIColor?
+
+    /// Optional fill color override for the end conversation button.
+    public var endConversationButtonColor: UIColor?
+
+    /// Text color for the optional disclosure shown below the controls.
+    public var conversationDisclosureTextColor: UIColor
+
+    /// Font for the optional disclosure shown below the controls.
+    /// Set a custom `UIFont` to configure both the typeface and point size.
+    public var conversationDisclosureFont: UIFont
+
     /// Optional override for the mobile renderer background color.
     /// When nil, the renderer falls back to `backgroundColor`.
     public var rendererBackgroundColor: UIColor?
@@ -46,12 +62,20 @@ public struct AgentVoiceStyle {
         titleBarColor: UIColor = .systemBackground,
         titleBarTextColor: UIColor = .label,
         controlsColor: UIColor = UIColor(red: 16 / 255, green: 34 / 255, blue: 76 / 255, alpha: 1),
+        muteButtonColor: UIColor? = nil,
+        endConversationButtonColor: UIColor? = nil,
+        conversationDisclosureTextColor: UIColor = .secondaryLabel,
+        conversationDisclosureFont: UIFont = .systemFont(ofSize: 12, weight: .regular),
         rendererBackgroundColor: UIColor? = nil
     ) {
         self.backgroundColor = backgroundColor
         self.titleBarColor = titleBarColor
         self.titleBarTextColor = titleBarTextColor
         self.controlsColor = controlsColor
+        self.muteButtonColor = muteButtonColor
+        self.endConversationButtonColor = endConversationButtonColor
+        self.conversationDisclosureTextColor = conversationDisclosureTextColor
+        self.conversationDisclosureFont = conversationDisclosureFont
         self.rendererBackgroundColor = rendererBackgroundColor
     }
 }
@@ -64,12 +88,30 @@ public struct AgentVoiceControllerOptions {
     /// Optional override for the navigation bar title.
     public var titleBarMessage: String?
 
+    /// Hide the native navigation bar. The containing view is then responsible for any title or
+    /// app bar UI.
+    public var hideTitleBar: Bool = false
+
     /// Customize the look and feel of native voice UI elements.
     public var voiceStyle: AgentVoiceStyle = AgentVoiceStyle()
 
     /// Text shown in the native voice waveform placeholder before the first
     /// renderable attachment is displayed.
     public var voicePlaceholderText: String = "How can I help you today?"
+
+    /// Optional disclosure text shown below the native mute/end controls.
+    public var disclosureText: String?
+
+    /// Optional icon override for the mute button. Use an SVG/vector asset from
+    /// the host app asset catalog or any template `UIImage`.
+    public var muteIcon: UIImage?
+
+    /// Optional icon override for the muted state. Defaults to the SDK mic-off icon.
+    public var mutedIcon: UIImage?
+
+    /// Optional icon override for the end conversation button. Use an SVG/vector asset from
+    /// the host app asset catalog or any template `UIImage`.
+    public var endConversationIcon: UIImage?
 
     /// Optional key/value pairs to include in SVP `open.subMsg.agentParameters`.
     /// These values are treated as secrets by the voice backend and should be
@@ -127,6 +169,11 @@ public struct AgentVoiceControllerOptions {
     /// Callback invoked when the user taps the switch-to-chat button.
     internal var onSwitchToChat: (() -> Void)?
 
+    /// When true, tapping End closes the SVP session with the `continue_in_chat` close reason and
+    /// invokes `onSwitchToChat` instead of `onVoiceEnded`. Set by `AgentVoiceChatCoordinator` when
+    /// `autoShowChatOnEnd` is enabled.
+    internal var endRoutesToChat: Bool = false
+
     /// Optional hint describing why the client is resuming. Only meaningful when
     /// `resumeConversation` is true; when set, the server emits a `continue-in-voice` client event
     /// so the agent can greet the user back to voice.
@@ -148,6 +195,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private let agent: Agent
     private var options: AgentVoiceControllerOptions
     private var voiceSession: VoiceSessionManager?
+    private var secretRefreshOrchestrator: SecretRefreshOrchestrator?
     private var renderer: MobileRendererView?
     private var hasShownFirstAttachment = false
     private var rendererFailed = false
@@ -167,8 +215,17 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private let muteButton = UIButton(type: .system)
     private let endButton = UIButton(type: .system)
     private let controlsContainer = UIView()
+    private let disclosureLabel = UILabel()
+    private var previousNavigationBarHidden: Bool?
     private var hasShutdownVoiceSession = false
     private var hasReceivedInitialGreeting = false
+    private var hasReceivedInitialAudioMessage = false
+    private var initialGreetingFallbackWorkItem: DispatchWorkItem?
+    private let initialGreetingFallbackDelay: TimeInterval = 2.0
+
+    private var shouldHideTitleBar: Bool {
+        options.hideTitleBar && !options.canSwitchToChat
+    }
 
     public weak var voiceCallbacks: VoiceCallbacks?
 
@@ -207,9 +264,24 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         startVoiceSession()
     }
 
+    public override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        guard shouldHideTitleBar, let navigationController else { return }
+        previousNavigationBarHidden = navigationController.isNavigationBarHidden
+        navigationController.setNavigationBarHidden(true, animated: animated)
+    }
+
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         voiceSession?.resumeListening()
+    }
+
+    public override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        if let previousNavigationBarHidden, let navigationController {
+            navigationController.setNavigationBarHidden(previousNavigationBarHidden, animated: animated)
+            self.previousNavigationBarHidden = nil
+        }
     }
 
     public override func viewDidDisappear(_ animated: Bool) {
@@ -221,6 +293,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     }
 
     deinit {
+        cancelInitialGreetingFallback()
         shutdownVoiceSessionIfNeeded()
         fireDismissedIfNeeded()
     }
@@ -250,6 +323,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             delegate: self
         )
         self.voiceSession = session
+        self.secretRefreshOrchestrator = SecretRefreshOrchestrator(voiceSession: session, callbacks: voiceCallbacks)
         session.connect()
         updateUI(for: .connecting)
     }
@@ -257,6 +331,8 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private func shutdownVoiceSessionIfNeeded(closeReason: AgentVoiceCloseReason = .normal) {
         guard !hasShutdownVoiceSession else { return }
         hasShutdownVoiceSession = true
+        secretRefreshOrchestrator?.cancel()
+        secretRefreshOrchestrator = nil
         voiceSession?.disconnect(closeReason: closeReason)
         voiceSession = nil
     }
@@ -286,10 +362,38 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         }
     }
 
+    public func voiceSessionDidReceiveInitialAudio(_ session: VoiceSessionManager) {
+        DispatchQueue.main.async {
+            self.hasReceivedInitialAudioMessage = true
+            self.cancelInitialGreetingFallback()
+        }
+    }
+
+    public func voiceSessionDidStartInitialAudioPlayback(_ session: VoiceSessionManager) {
+        DispatchQueue.main.async {
+            self.markInitialGreetingReceivedIfNeeded()
+        }
+    }
+
     public func voiceSession(_ session: VoiceSessionManager, didReceiveAttachments attachments: [[String: Any]]) {
-        if !attachments.isEmpty {
-            DispatchQueue.main.async {
-                self.markInitialGreetingReceivedIfNeeded()
+        // Peel off any secret_refresh custom attachments and route them to
+        // the orchestrator. The renderer cannot handle these and the host's
+        // VoiceCallbacks is the right destination.
+        var attachments = attachments
+        var secretRefreshAttachments: [[String: Any]] = []
+        attachments.removeAll { raw in
+            if SecretRefreshOrchestrator.isSecretRefreshAttachment(raw) {
+                secretRefreshAttachments.append(raw)
+                return true
+            }
+            return false
+        }
+        if !secretRefreshAttachments.isEmpty, let secretRefreshOrchestrator {
+            // Pick up the latest callbacks reference each time, in case the host
+            // assigned voiceCallbacks after we constructed the orchestrator.
+            secretRefreshOrchestrator.setCallbacks(voiceCallbacks)
+            for attachment in secretRefreshAttachments {
+                secretRefreshOrchestrator.handle(attachment: attachment)
             }
         }
 
@@ -298,15 +402,26 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             "AgentVoiceController: received \(attachments.count) attachment(s) from SVP, types=\(attachmentTypes), renderer=\(renderer != nil ? "ready" : "nil")"
         )
 
-        if !attachments.isEmpty {
-            let signature = renderableBatchSignature(attachments)
+        let shouldClearRenderer = attachments.contains(where: isClearConversationAttachment)
+        let renderableAttachments = attachments.filter { !isClearConversationAttachment($0) }
+
+        if shouldClearRenderer {
+            lastRenderableAttachmentsSignature = nil
+            debugLog("AgentVoiceController: received clear-conversation signal; scheduling renderer reset")
+            DispatchQueue.main.async {
+                self.clearConversation()
+            }
+        }
+
+        if !renderableAttachments.isEmpty {
+            let signature = renderableBatchSignature(renderableAttachments)
             if let signature, signature == lastRenderableAttachmentsSignature {
                 debugLog("AgentVoiceController: dropping duplicate renderable attachment batch")
                 return
             }
             lastRenderableAttachmentsSignature = signature
 
-            let agentAttachments = attachments.compactMap(AgentAttachment.init(raw:))
+            let agentAttachments = renderableAttachments.compactMap(AgentAttachment.init(raw:))
             DispatchQueue.main.async {
                 if !agentAttachments.isEmpty {
                     self.voiceCallbacks?.didReceiveAgentAttachment(attachments: agentAttachments)
@@ -329,9 +444,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
                 }
 
                 if let renderer = self.renderer {
-                    renderer.pushAttachments(attachments)
+                    renderer.pushAttachments(renderableAttachments)
                 } else {
-                    self.pendingRenderableAttachmentBatches.append(attachments)
+                    self.pendingRenderableAttachmentBatches.append(renderableAttachments)
                 }
             }
         } else {
@@ -344,6 +459,29 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             return nil
         }
         return data.base64EncodedString()
+    }
+
+    private func isClearConversationAttachment(_ attachment: [String: Any]) -> Bool {
+        guard
+            let attachmentType = attachment["type"] as? String,
+            attachmentType == "custom",
+            let data = attachment["data"] as? [String: Any],
+            let dataType = data["type"] as? String
+        else {
+            return false
+        }
+        return dataType == clearConversationRendererType
+    }
+
+    private func clearConversation() {
+        let pendingBatchCount = pendingRenderableAttachmentBatches.count
+        let rendererState = renderer != nil ? "ready" : "nil"
+        debugLog(
+            "AgentVoiceController: clearing conversation (pendingBatches=\(pendingBatchCount), renderer=\(rendererState))"
+        )
+        pendingRenderableAttachmentBatches.removeAll()
+        renderer?.clearConversation()
+        debugLog("AgentVoiceController: conversation cleared")
     }
 
     public func voiceSession(_ session: VoiceSessionManager, didEncounterError error: Error) {
@@ -552,51 +690,76 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         view.addSubview(controlsContainer)
 
         let controlsColor = options.voiceStyle.controlsColor
+        let muteButtonColor = options.voiceStyle.muteButtonColor ?? controlsColor
+        let endConversationButtonColor = options.voiceStyle.endConversationButtonColor ?? controlsColor
 
         configureControlButton(
             muteButton,
-            systemImage: "mic.fill",
-            backgroundColor: controlsColor,
+            image: options.muteIcon ?? UIImage(systemName: "mic.fill"),
+            backgroundColor: muteButtonColor,
+            accessibilityLabel: "Mute microphone",
             action: #selector(muteTapped)
         )
 
         configureControlButton(
             endButton,
-            systemImage: "xmark",
-            backgroundColor: controlsColor,
+            image: options.endConversationIcon ?? UIImage(systemName: "xmark"),
+            backgroundColor: endConversationButtonColor,
             accessibilityLabel: "Close conversation",
             action: #selector(endTapped)
         )
 
-        let stack = UIStackView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.spacing = 28
-        stack.addArrangedSubview(muteButton)
-        stack.addArrangedSubview(endButton)
-        controlsContainer.addSubview(stack)
+        let buttonsStack = UIStackView()
+        buttonsStack.translatesAutoresizingMaskIntoConstraints = false
+        buttonsStack.axis = .horizontal
+        buttonsStack.alignment = .center
+        buttonsStack.spacing = 28
+        buttonsStack.addArrangedSubview(muteButton)
+        buttonsStack.addArrangedSubview(endButton)
+
+        disclosureLabel.translatesAutoresizingMaskIntoConstraints = false
+        disclosureLabel.text = options.disclosureText
+        disclosureLabel.textColor = options.voiceStyle.conversationDisclosureTextColor
+        disclosureLabel.font = options.voiceStyle.conversationDisclosureFont
+        disclosureLabel.textAlignment = .center
+        disclosureLabel.numberOfLines = 0
+        disclosureLabel.isHidden = options.disclosureText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+        let controlsBottomPadding: CGFloat = disclosureLabel.isHidden ? 18 : 4
+
+        let controlsStack = UIStackView()
+        controlsStack.translatesAutoresizingMaskIntoConstraints = false
+        controlsStack.axis = .vertical
+        controlsStack.alignment = .center
+        controlsStack.spacing = disclosureLabel.isHidden ? 0 : 18
+        controlsStack.addArrangedSubview(buttonsStack)
+        controlsStack.addArrangedSubview(disclosureLabel)
+        controlsContainer.addSubview(controlsStack)
 
         NSLayoutConstraint.activate([
             controlsContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             controlsContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             controlsContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            controlsContainer.heightAnchor.constraint(equalToConstant: controlButtonSize + 32),
 
-            stack.centerXAnchor.constraint(equalTo: controlsContainer.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: controlsContainer.centerYAnchor),
+            controlsStack.topAnchor.constraint(equalTo: controlsContainer.topAnchor, constant: 16),
+            controlsStack.leadingAnchor.constraint(greaterThanOrEqualTo: controlsContainer.leadingAnchor, constant: 24),
+            controlsStack.trailingAnchor.constraint(lessThanOrEqualTo: controlsContainer.trailingAnchor, constant: -24),
+            controlsStack.centerXAnchor.constraint(equalTo: controlsContainer.centerXAnchor),
+            controlsStack.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -controlsBottomPadding),
+
+            disclosureLabel.leadingAnchor.constraint(equalTo: controlsContainer.leadingAnchor, constant: 24),
+            disclosureLabel.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -24),
         ])
     }
 
     private func configureControlButton(
         _ button: UIButton,
-        systemImage: String,
+        image: UIImage?,
         backgroundColor: UIColor,
         accessibilityLabel: String? = nil,
         action: Selector
     ) {
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(UIImage(systemName: systemImage), for: .normal)
+        button.setImage(image?.withRenderingMode(.alwaysTemplate), for: .normal)
         button.tintColor = .white
         button.backgroundColor = backgroundColor
         button.layer.cornerRadius = controlButtonSize / 2
@@ -616,17 +779,21 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         case .connecting:
             setControlButtonsEnabled(true)
             setLoadingStateVisible(!hasReceivedInitialGreeting)
+            cancelInitialGreetingFallback()
             stopWaveformAnimation()
         case .listening:
-            markInitialGreetingReceivedIfNeeded()
+            setLoadingStateVisible(!hasReceivedInitialGreeting)
+            scheduleInitialGreetingFallbackIfNeeded()
             setControlButtonsEnabled(true)
             stopWaveformAnimation()
         case .speaking:
-            markInitialGreetingReceivedIfNeeded()
+            setLoadingStateVisible(!hasReceivedInitialGreeting)
+            cancelInitialGreetingFallback()
             setControlButtonsEnabled(true)
             startWaveformAnimation()
         case .ended:
-            markInitialGreetingReceivedIfNeeded()
+            setLoadingStateVisible(false)
+            cancelInitialGreetingFallback()
             stopWaveformAnimation()
             setControlButtonsEnabled(false)
         }
@@ -771,7 +938,22 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private func markInitialGreetingReceivedIfNeeded() {
         guard !hasReceivedInitialGreeting else { return }
         hasReceivedInitialGreeting = true
+        cancelInitialGreetingFallback()
         setLoadingStateVisible(false)
+    }
+
+    private func scheduleInitialGreetingFallbackIfNeeded() {
+        guard !hasReceivedInitialGreeting, !hasReceivedInitialAudioMessage, initialGreetingFallbackWorkItem == nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.markInitialGreetingReceivedIfNeeded()
+        }
+        initialGreetingFallbackWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + initialGreetingFallbackDelay, execute: workItem)
+    }
+
+    private func cancelInitialGreetingFallback() {
+        initialGreetingFallbackWorkItem?.cancel()
+        initialGreetingFallbackWorkItem = nil
     }
 
     private func setLoadingStateVisible(_ visible: Bool) {
@@ -790,14 +972,20 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         debugLog("AgentVoiceController: mute toggled -> \(isMuted ? "muted" : "unmuted")")
         if isMuted {
             voiceSession?.pauseListening()
-            muteButton.setImage(UIImage(systemName: "mic.slash.fill"), for: .normal)
+            let image = options.mutedIcon ?? UIImage(systemName: "mic.slash.fill")
+            muteButton.setImage(image?.withRenderingMode(.alwaysTemplate), for: .normal)
         } else {
             voiceSession?.resumeListening()
-            muteButton.setImage(UIImage(systemName: "mic.fill"), for: .normal)
+            let image = options.muteIcon ?? UIImage(systemName: "mic.fill")
+            muteButton.setImage(image?.withRenderingMode(.alwaysTemplate), for: .normal)
         }
     }
 
     @objc private func endTapped() {
+        if options.endRoutesToChat {
+            switchToChatTapped()
+            return
+        }
         endConversation()
     }
 
@@ -808,7 +996,11 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 }
 
 /// Callbacks for voice session lifecycle events.
-public protocol VoiceCallbacks: AnyObject {
+///
+/// Inherits from `AgentEventListener` so that events emitted by the agent
+/// runtime (e.g. `onSecretExpiry`, `onLinkClick`) can be implemented once and
+/// satisfy both voice and chat surfaces.
+public protocol VoiceCallbacks: AgentEventListener {
     /// Called when the user explicitly ends the voice session (e.g., taps the End button).
     /// Mutually exclusive with `onVoiceDismissed()` -- only one fires per controller lifetime.
     func onVoiceEnded()
@@ -822,11 +1014,6 @@ public protocol VoiceCallbacks: AnyObject {
     func didReceiveAgentAttachment(attachments: [AgentAttachment])
     func onSessionInfoReceived(conversationID: String, encryptionKey: String)
     func onResumeTokenReceived(token: String)
-
-    /// Callback invoked when the user taps a link in a rendered voice attachment. Return `true`
-    /// if the host app handled the link in-app, or `false` to let the SDK fall back to the system
-    /// handler.
-    func onLinkClick(url: URL) -> Bool
 }
 
 public extension VoiceCallbacks {
@@ -834,5 +1021,4 @@ public extension VoiceCallbacks {
     func didReceiveAgentAttachment(attachments: [AgentAttachment]) {}
     func onSessionInfoReceived(conversationID: String, encryptionKey: String) {}
     func onResumeTokenReceived(token: String) {}
-    func onLinkClick(url: URL) -> Bool { false }
 }

@@ -42,7 +42,6 @@ final class AudioPlaybackQueue {
             self.audioBufferQueue.append(QueuedAudioBuffer(data: audioData, mark: mark))
             if !self.isPlaying {
                 self.isPlaying = true
-                self.setSpeakingNotified(true)
                 self.playNextBuffer()
             }
         }
@@ -91,6 +90,7 @@ final class AudioPlaybackQueue {
                 }
                 self.playNextBuffer()
             })
+            self.setSpeakingNotified(true)
         }
     }
 
