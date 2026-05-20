@@ -125,22 +125,6 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         }
     }
 
-    // MARK: - URLSessionDelegate
-
-    func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        if config.apiHost == .local,
-           challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-           let serverTrust = challenge.protectionSpace.serverTrust {
-            completionHandler(.useCredential, URLCredential(trust: serverTrust))
-            return
-        }
-        completionHandler(.performDefaultHandling, nil)
-    }
-
     // MARK: - Internal
 
     private func nextMsgNum() -> Int {
