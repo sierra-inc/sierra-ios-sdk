@@ -28,6 +28,12 @@ public protocol AgentEventListener: AnyObject {
     /// - nil if the secret cannot be provided due to a known condition (e.g. the user has signed out)
     /// - an error if the secret cannot be fetched right now, but the request should be retried.
     func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void)
+    /// Callback invoked when the user identity token (JWT) has expired and needs to be refreshed.
+    /// Reply handler should be invoked with one of:
+    /// - a fresh JWT string
+    /// - nil if the token cannot be provided (the session downgrades to anonymous)
+    /// - an error if the token cannot be fetched right now, but the request should be retried.
+    func onUserIdentityTokenExpiry(replyHandler: @escaping (Result<String?, any Error>) -> Void)
     /// Callback invoked when the customer taps a link in the conversation that would otherwise be
     /// opened externally. Return `true` if the host app handled the link in-app, or `false` to let
     /// the SDK fall back to the system handler.
@@ -38,6 +44,9 @@ public protocol AgentEventListener: AnyObject {
 // implement only the subset that they care about.
 public extension AgentEventListener {
     func onSecretExpiry(secretName: String, replyHandler: @escaping (Result<String?, any Error>) -> Void) {
+        replyHandler(.success(nil))
+    }
+    func onUserIdentityTokenExpiry(replyHandler: @escaping (Result<String?, any Error>) -> Void) {
         replyHandler(.success(nil))
     }
     func onLinkClick(url: URL) -> Bool {

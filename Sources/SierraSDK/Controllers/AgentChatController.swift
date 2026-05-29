@@ -145,6 +145,17 @@ public struct AgentChatControllerOptions {
     /// useConfiguredStyle is true, the server-configured value is used.
     public var showSpeakerLabels: Bool?
 
+    /// Whether to show per-message avatars for agents. When enabled, the chat shows avatars next to
+    /// live agent messages using image URLs provided by the contact center. If agentAvatarURL is also
+    /// set, that image is shown next to virtual agent messages. When nil and useConfiguredStyle is
+    /// true, the server-configured value is used.
+    public var showAvatars: Bool?
+
+    /// HTTPS URL of an image to show next to virtual agent messages when showAvatars is enabled.
+    /// Values are trimmed and must be 2048 characters or fewer. When nil and useConfiguredStyle is
+    /// true, the server-configured value is used.
+    public var agentAvatarURL: String?
+
     /// Controls whether the message label (speaker name and timestamp) is shown above or below chat
     /// message bubbles. When `.default` and useConfiguredStyle is true, the server-configured
     /// value is used.
@@ -274,6 +285,8 @@ extension AgentChatControllerOptions {
         ]
         if let showTimestamps { brand["showTimestamps"] = showTimestamps }
         if let showSpeakerLabels { brand["showBotName"] = showSpeakerLabels }
+        if let showAvatars { brand["showAvatars"] = showAvatars }
+        if let agentAvatarURL { brand["agentAvatarURL"] = agentAvatarURL }
         // If locale auto-detect or server-configured chat strings are enabled, remove any messages
         // that are set to their default value so server-configured values or locale defaults can win.
         if shouldOmitDefaultChatStrings {
@@ -533,6 +546,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         // Pre-populate storage before the web content loads. This allows the web embed to read
         // stored conversation state synchronously during init.
         addStorageUserScript(to: contentController)
+        addCapabilitiesUserScript(to: contentController)
 
         applyAppBoundDomainsConfig(configuration)
         webView = CustomWebView(frame: .zero, configuration: configuration)
@@ -635,6 +649,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         let contentController = webView.configuration.userContentController
         contentController.removeAllUserScripts()
         addStorageUserScript(to: contentController)
+        addCapabilitiesUserScript(to: contentController)
         loadChatURL()
     }
 
@@ -650,6 +665,17 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
             )
             contentController.addUserScript(storageScript)
         }
+    }
+
+    /// Advertises which optional native callbacks this SDK build supports so the web embed can
+    /// avoid registering bridge functions that would no-op or hang on older hosts.
+    private func addCapabilitiesUserScript(to contentController: WKUserContentController) {
+        let capabilitiesScript = WKUserScript(
+            source: "window.__sierraMobileCapabilities = { onUserIdentityTokenExpiry: true };",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        contentController.addUserScript(capabilitiesScript)
     }
 
     private func loadChatURL() {
@@ -836,6 +862,17 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                         }
                     } else {
                         replyHandler(nil, "secretName is missing")
+                    }
+                case "onUserIdentityTokenExpiry":
+                    if let optionsConversationCallbacks {
+                        optionsConversationCallbacks.onUserIdentityTokenExpiry { result in
+                            switch result {
+                            case .success(let value): replyHandler(value, nil)
+                            case .failure(let error): replyHandler(nil, error.localizedDescription)
+                            }
+                        }
+                    } else {
+                        replyHandler(nil, nil)
                     }
                 case "getCustomFonts":
                     guard let customFonts = options.chatStyle.typography?.customFonts else {
