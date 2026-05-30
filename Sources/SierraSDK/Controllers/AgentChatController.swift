@@ -963,6 +963,10 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
             return
         }
 
+        if optionsConversationCallbacks?.onConversationInitializationError() == true {
+            return
+        }
+
         let errorMessage: String
         if errorCode == NSURLErrorNotConnectedToInternet {
             errorMessage = options.noInternetConnectionErrorMessage

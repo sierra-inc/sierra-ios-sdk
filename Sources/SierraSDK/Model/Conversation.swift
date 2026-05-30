@@ -69,6 +69,10 @@ public protocol ConversationCallbacks: AgentEventListener {
     func onRequestEndConversationEnabledChange(_ enabled: Bool)
     /// Callback invoked when the conversation ends.
     func onConversationEnded()
+    /// Callback invoked when the agent chat encounters a critical error and cannot begin the
+    /// conversation. Return `true` if the host app handled the error, or `false` to let the SDK
+    /// fall back to its built-in error UI.
+    func onConversationInitializationError() -> Bool
     /// Callback invoked when a non-Sierra agent joins the conversation.
     func onExternalAgentJoin(externalConversationID: String?, externalAgentID: String?)
     /// Callback invoked when the conversation list is shown.
@@ -89,6 +93,7 @@ public extension ConversationCallbacks {
     func onAgentMessageEnd() {}
     func onRequestEndConversationEnabledChange(_ enabled: Bool) {}
     func onConversationEnded() {}
+    func onConversationInitializationError() -> Bool { false }
     func onExternalAgentJoin(externalConversationID: String?, externalAgentID: String?) {}
     func onShowConversationList() {}
     func onHideConversationList() {}
