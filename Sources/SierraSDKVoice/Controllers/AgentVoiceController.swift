@@ -46,6 +46,16 @@ public struct AgentVoiceStyle {
     /// Optional fill color override for the end conversation button.
     public var endConversationButtonColor: UIColor?
 
+    /// Tint color applied to the mute button glyph. Defaults to white.
+    /// Set this to a darker color when using a white mute background so the
+    /// glyph remains visible.
+    public var muteButtonIconColor: UIColor
+
+    /// Tint color applied to the end conversation button glyph. Defaults to white.
+    /// Set this to a darker color when using a white end background so the
+    /// glyph remains visible.
+    public var endConversationButtonIconColor: UIColor
+
     /// Text color for the optional disclosure shown below the controls.
     public var conversationDisclosureTextColor: UIColor
 
@@ -64,6 +74,8 @@ public struct AgentVoiceStyle {
         controlsColor: UIColor = UIColor(red: 16 / 255, green: 34 / 255, blue: 76 / 255, alpha: 1),
         muteButtonColor: UIColor? = nil,
         endConversationButtonColor: UIColor? = nil,
+        muteButtonIconColor: UIColor = .white,
+        endConversationButtonIconColor: UIColor = .white,
         conversationDisclosureTextColor: UIColor = .secondaryLabel,
         conversationDisclosureFont: UIFont = .systemFont(ofSize: 12, weight: .regular),
         rendererBackgroundColor: UIColor? = nil
@@ -74,6 +86,8 @@ public struct AgentVoiceStyle {
         self.controlsColor = controlsColor
         self.muteButtonColor = muteButtonColor
         self.endConversationButtonColor = endConversationButtonColor
+        self.muteButtonIconColor = muteButtonIconColor
+        self.endConversationButtonIconColor = endConversationButtonIconColor
         self.conversationDisclosureTextColor = conversationDisclosureTextColor
         self.conversationDisclosureFont = conversationDisclosureFont
         self.rendererBackgroundColor = rendererBackgroundColor
@@ -98,6 +112,13 @@ public struct AgentVoiceControllerOptions {
     /// Text shown in the native voice waveform placeholder before the first
     /// renderable attachment is displayed.
     public var voicePlaceholderText: String = "How can I help you today?"
+
+    /// Optional icon override for the central waveform placeholder. Use an
+    /// SVG/vector asset from the host app asset catalog or any `UIImage`. The
+    /// image is rendered as-provided (its own colors), so pass a template image
+    /// if you want it tinted. It is shown statically, without the speaking-state
+    /// pulse animation applied to the default waveform.
+    public var voiceWaveformIcon: UIImage?
 
     /// Optional disclosure text shown below the native mute/end controls.
     public var disclosureText: String?
@@ -166,8 +187,10 @@ public struct AgentVoiceControllerOptions {
     /// button.
     internal var switchToChatLabel: String = "Continue in chat"
 
-    /// Callback invoked when the user taps the switch-to-chat button.
-    internal var onSwitchToChat: (() -> Void)?
+    /// Callback invoked when the conversation switches from voice to chat. `agentInitiated` is true
+    /// for a server/agent-driven handoff (the agent requested continue-in-chat) and false for a
+    /// user action (the switch-to-chat button or an end that routes to chat).
+    internal var onSwitchToChat: ((_ agentInitiated: Bool) -> Void)?
 
     /// When true, tapping End closes the SVP session with the `continue_in_chat` close reason and
     /// invokes `onSwitchToChat` instead of `onVoiceEnded`. Set by `AgentVoiceChatCoordinator` when
@@ -506,6 +529,17 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         }
     }
 
+    public func voiceSessionDidRequestContinueInChat(_ session: VoiceSessionManager) {
+        DispatchQueue.main.async {
+            self.updateUI(for: .ended)
+            // The server already closed the SVP session for the handoff; mark it shut down and
+            // fire the switch-to-chat exit so the coordinator presents chat. The exit-callback
+            // guard prevents double-firing if the user had also tapped Continue in chat.
+            self.hasShutdownVoiceSession = true
+            self.fireSwitchedToChatIfNeeded(agentInitiated: true)
+        }
+    }
+
     // MARK: - Mobile Renderer
 
     private func loadMobileRenderer() {
@@ -602,8 +636,12 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         view.addSubview(placeholderContainer)
 
         placeholderWaveformIcon.translatesAutoresizingMaskIntoConstraints = false
-        placeholderWaveformIcon.image = UIImage(systemName: "waveform")
-        placeholderWaveformIcon.tintColor = UIColor.systemBlue
+        if let waveformIcon = options.voiceWaveformIcon {
+            placeholderWaveformIcon.image = waveformIcon
+        } else {
+            placeholderWaveformIcon.image = UIImage(systemName: "waveform")
+            placeholderWaveformIcon.tintColor = UIColor.systemBlue
+        }
         placeholderWaveformIcon.contentMode = .scaleAspectFit
         placeholderContainer.addSubview(placeholderWaveformIcon)
 
@@ -697,6 +735,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             muteButton,
             image: options.muteIcon ?? UIImage(systemName: "mic.fill"),
             backgroundColor: muteButtonColor,
+            iconColor: options.voiceStyle.muteButtonIconColor,
             accessibilityLabel: "Mute microphone",
             action: #selector(muteTapped)
         )
@@ -705,6 +744,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             endButton,
             image: options.endConversationIcon ?? UIImage(systemName: "xmark"),
             backgroundColor: endConversationButtonColor,
+            iconColor: options.voiceStyle.endConversationButtonIconColor,
             accessibilityLabel: "Close conversation",
             action: #selector(endTapped)
         )
@@ -755,12 +795,13 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         _ button: UIButton,
         image: UIImage?,
         backgroundColor: UIColor,
+        iconColor: UIColor,
         accessibilityLabel: String? = nil,
         action: Selector
     ) {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(image?.withRenderingMode(.alwaysTemplate), for: .normal)
-        button.tintColor = .white
+        button.tintColor = iconColor
         button.backgroundColor = backgroundColor
         button.layer.cornerRadius = controlButtonSize / 2
         button.clipsToBounds = true
@@ -893,10 +934,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         voiceCallbacks?.onVoiceDismissed()
     }
 
-    private func fireSwitchedToChatIfNeeded() {
+    private func fireSwitchedToChatIfNeeded(agentInitiated: Bool) {
         guard exitCallbackFired == .none else { return }
         exitCallbackFired = .switchedToChat
-        options.onSwitchToChat?()
+        options.onSwitchToChat?(agentInitiated)
     }
 
     private func dismissVoiceController() {
@@ -919,6 +960,8 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     }
 
     private func startWaveformAnimation() {
+        // A customer-supplied waveform is rendered as-provided, so it is not animated.
+        guard options.voiceWaveformIcon == nil else { return }
         guard !placeholderContainer.isHidden else { return }
         guard placeholderWaveformIcon.layer.animation(forKey: "pulse") == nil else { return }
         let anim = CABasicAnimation(keyPath: "transform.scale")
@@ -991,7 +1034,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     @objc private func switchToChatTapped() {
         shutdownVoiceSessionIfNeeded(closeReason: .continueInChat)
-        fireSwitchedToChatIfNeeded()
+        fireSwitchedToChatIfNeeded(agentInitiated: false)
     }
 }
 

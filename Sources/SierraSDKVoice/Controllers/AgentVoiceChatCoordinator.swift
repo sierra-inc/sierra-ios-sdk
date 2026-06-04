@@ -106,6 +106,9 @@ public final class AgentVoiceChatCoordinator {
     private let agent: Agent
     private let options: Options
     private var pendingContinueInChat = false
+    // True when the pending switch was agent-initiated (vs a manual "Continue in chat" tap); the
+    // seeded chat state then drives the agent on resume instead of switching silently.
+    private var pendingAgentHandoff = false
     private var chatCallbacksAdapter: ChatCallbacksAdapter?
 
     public init(agent: Agent, options: Options) {
@@ -128,11 +131,11 @@ public final class AgentVoiceChatCoordinator {
         if shouldResumeConversation {
             voiceOptions.resumeReason = .continueInVoice
         }
+        voiceOptions.onSwitchToChat = { [weak self] agentInitiated in
+            self?.handleSwitchToChat(agentInitiated: agentInitiated)
+        }
         if options.canSwitchToChat {
             voiceOptions.canSwitchToChat = true
-            voiceOptions.onSwitchToChat = { [weak self] in
-                self?.handleSwitchToChat()
-            }
             voiceOptions.endRoutesToChat = options.autoShowChatOnEnd
         }
 
@@ -143,8 +146,9 @@ public final class AgentVoiceChatCoordinator {
 
     public func makeChatController() -> AgentChatController {
         if pendingContinueInChat {
-            seedChatContinuationStateIfAvailable()
+            seedChatContinuationStateIfAvailable(agentInitiated: pendingAgentHandoff)
             pendingContinueInChat = false
+            pendingAgentHandoff = false
         }
 
         var chatOptions = options.chatOptions
@@ -183,22 +187,25 @@ public final class AgentVoiceChatCoordinator {
         encryptionKey = nil
         voiceResumeToken = nil
         pendingContinueInChat = false
+        pendingAgentHandoff = false
         agent.resetConversation()
     }
 
-    private func handleSwitchToChat() {
+    private func handleSwitchToChat(agentInitiated: Bool) {
         pendingContinueInChat = true
+        pendingAgentHandoff = agentInitiated
         delegate?.coordinatorDidRequestShowingChat(self)
     }
 
-    private func seedChatContinuationStateIfAvailable() {
+    private func seedChatContinuationStateIfAvailable(agentInitiated: Bool) {
         guard let conversationID, let encryptionKey else { return }
 
         guard
             let jsonData = try? JSONSerialization.data(
                 withJSONObject: persistedChatContinuationState(
                     conversationID: conversationID,
-                    encryptionKey: encryptionKey
+                    encryptionKey: encryptionKey,
+                    agentInitiated: agentInitiated
                 )
             ),
             let jsonString = String(data: jsonData, encoding: .utf8)
@@ -217,13 +224,20 @@ public final class AgentVoiceChatCoordinator {
 
     private func persistedChatContinuationState(
         conversationID: String,
-        encryptionKey: String
+        encryptionKey: String,
+        agentInitiated: Bool
     ) -> [String: Any] {
         var state: [String: Any] = [
             "conversationID": conversationID,
             "encryptionKey": encryptionKey,
-            "continueInChatOnResume": true,
         ]
+        // An agent-initiated handoff drives the chat agent (the embed sends a continue-in-chat
+        // client event on resume); a manual switch stays silent. The embed reads exactly one flag.
+        if agentInitiated {
+            state["agentHandoffOnResume"] = true
+        } else {
+            state["continueInChatOnResume"] = true
+        }
         if let voiceConversationID {
             state["voiceConversationID"] = voiceConversationID
         }
@@ -283,7 +297,7 @@ private final class ChatCallbacksAdapter: ConversationCallbacks {
 extension AgentVoiceChatCoordinator: VoiceCallbacks {
     public func onVoiceEnded() {
         if options.canSwitchToChat && options.autoShowChatOnEnd {
-            handleSwitchToChat()
+            handleSwitchToChat(agentInitiated: false)
             return
         }
         resetConversation()

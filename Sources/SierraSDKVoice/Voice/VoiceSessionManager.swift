@@ -19,12 +19,14 @@ public protocol VoiceSessionDelegate: AnyObject {
     func voiceSession(_ session: VoiceSessionManager, didChangeState state: VoiceSessionManager.State)
     func voiceSession(_ session: VoiceSessionManager, didEncounterError error: Error)
     func voiceSessionDidEnd(_ session: VoiceSessionManager)
+    func voiceSessionDidRequestContinueInChat(_ session: VoiceSessionManager)
     func voiceSession(_ session: VoiceSessionManager, didReceiveResumeToken token: String)
 }
 
 public extension VoiceSessionDelegate {
     func voiceSessionDidReceiveInitialAudio(_ session: VoiceSessionManager) {}
     func voiceSessionDidStartInitialAudioPlayback(_ session: VoiceSessionManager) {}
+    func voiceSessionDidRequestContinueInChat(_ session: VoiceSessionManager) {}
     func voiceSession(_ session: VoiceSessionManager, didReceiveResumeToken token: String) {}
 }
 
@@ -429,8 +431,16 @@ public class VoiceSessionManager: NSObject {
         case "clear":
             audioPlaybackQueue?.clear()
         case "end_conversation":
-            disconnect(sendCloseMessage: true)
-            delegate?.voiceSessionDidEnd(self)
+            // A server-initiated voice→chat handoff ends the call with the continue_in_chat custom
+            // reason. Surface it distinctly so the host can continue the same conversation in chat;
+            // any other end is a normal session end.
+            if subMsg["customReason"] as? String == AgentVoiceCloseReason.continueInChat.rawValue {
+                disconnect(sendCloseMessage: true, closeReason: .continueInChat)
+                delegate?.voiceSessionDidRequestContinueInChat(self)
+            } else {
+                disconnect(sendCloseMessage: true)
+                delegate?.voiceSessionDidEnd(self)
+            }
         case "transfer":
             disconnect(sendCloseMessage: true, closeReason: .transferred)
             delegate?.voiceSessionDidEnd(self)
@@ -585,7 +595,17 @@ extension VoiceSessionManager: SVPTransportDelegate {
 
     func svpTransport(_ transport: SVPTransport, didReceiveMessageType type: String, subMsg: [String: Any], rawText: String) {
         sessionQueue.async {
-            guard self.isSessionRunning else { return }
+            // `end_conversation` and `transfer` are the server's terminal control messages: each
+            // ends the session, and `end_conversation` may carry a server-initiated voice→chat
+            // handoff (`customReason == continue_in_chat`). The server can send a terminal message
+            // right before the socket closes, and URLSession delivers the message and the close on
+            // separate main-queue callbacks with no ordering guarantee. If the close wins the race
+            // it flips `isSessionRunning` to false, so honor terminal messages regardless to avoid
+            // dropping them. (Today only `end_conversation` is server-closed; `transfer` is included
+            // defensively in case that changes.) Other messages are ignored once the session is no
+            // longer running.
+            let isTerminalControlMessage = type == "end_conversation" || type == "transfer"
+            guard self.isSessionRunning || isTerminalControlMessage else { return }
             self.handleMessage(type: type, subMsg: subMsg, rawText: rawText)
         }
     }
