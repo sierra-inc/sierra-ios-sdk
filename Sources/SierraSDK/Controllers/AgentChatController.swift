@@ -108,11 +108,31 @@ public struct AgentChatControllerOptions {
     /// - typography.customFonts: Custom fonts to load for the web content
     public var chatStyle: ChatStyle = DEFAULT_CHAT_STYLE
 
+    /// Inline SVG markup for the chat send button. Replaces the default send arrow (including
+    /// its background) when provided. Overridden by the server-configured value if useConfiguredStyle
+    /// is true.
+    public var sendButtonSVG: String?
+
+    /// Inline SVG markup for the send button when it is disabled (e.g. the input is empty).
+    /// Falls back to sendButtonSVG when not provided. Overridden by the server-configured value
+    /// if useConfiguredStyle is true.
+    public var sendButtonDisabledSVG: String?
+
     /// If set to true user will be able to save a conversation transcript via a menu item.
     public var canSaveTranscript: Bool = false;
 
     /// If set to true user will be able to end a conversation via a menu item.
     public var canEndConversation: Bool = false;
+
+    /// If set to true, the user is asked to confirm before the conversation ends. The
+    /// confirmation is shown inline within the chat (covering the transcript and input). Only
+    /// effective when `canEndConversation` is true.
+    public var confirmEndConversation: Bool = false;
+
+    /// If set to true, an end conversation button is shown in the chat footer (above the input)
+    /// while the user is speaking with a live agent. Only effective when `canEndConversation` is
+    /// true.
+    public var footerEndConversationButton: Bool = false;
 
     /// If set to true, indicates the app uses a custom action bar and the SDK should not show
     /// its native end conversation button, even when canEndConversation is true. The end
@@ -287,6 +307,8 @@ extension AgentChatControllerOptions {
         if let showSpeakerLabels { brand["showBotName"] = showSpeakerLabels }
         if let showAvatars { brand["showAvatars"] = showAvatars }
         if let agentAvatarURL { brand["agentAvatarURL"] = agentAvatarURL }
+        if let sendButtonSVG { brand["sendButtonSVG"] = sendButtonSVG }
+        if let sendButtonDisabledSVG { brand["sendButtonDisabledSVG"] = sendButtonDisabledSVG }
         // If locale auto-detect or server-configured chat strings are enabled, remove any messages
         // that are set to their default value so server-configured values or locale defaults can win.
         if shouldOmitDefaultChatStrings {
@@ -369,6 +391,14 @@ extension AgentChatControllerOptions {
             queryItems.append(URLQueryItem(name: "canEndConversation", value: "true"))
         }
 
+        if confirmEndConversation {
+            queryItems.append(URLQueryItem(name: "confirmEndConversation", value: "true"))
+        }
+
+        if footerEndConversationButton {
+            queryItems.append(URLQueryItem(name: "footerEndConversationButton", value: "true"))
+        }
+
         if canStartNewChat {
             queryItems.append(URLQueryItem(name: "canStartNewChat", value: "true"))
         }
@@ -444,6 +474,8 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private weak var optionsConversationCallbacks: ConversationCallbacks?
     private var requestEndConversationEnabled = false
     private var conversationEnded = false
+    private var transferredToHumanAgent = false
+    private var currentConversationID: String?
     private var showingConversationList = false
     private var isPageVisible = false
     private var lifecycleObservers: [NSObjectProtocol] = []
@@ -718,7 +750,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         }
 
         var rightItems: [UIBarButtonItem] = []
-        if !conversationEnded, let reconnectVoiceButton = makeReconnectVoiceButton() {
+        if !conversationEnded, !transferredToHumanAgent, let reconnectVoiceButton = makeReconnectVoiceButton() {
             rightItems.append(reconnectVoiceButton)
         }
 
@@ -783,13 +815,30 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                         })
                     }
                 case "onConversationIDAvailable":
-                    updateActionMenu()
                     if let unprefixedConversationID = body["unprefixedConversationID"] as? String {
+                        // A different conversation is now active in this controller (e.g. the user
+                        // started a new chat or switched conversations). Clear per-conversation UI
+                        // state so a prior transfer doesn't keep the reconnect-voice button hidden;
+                        // the embed re-sends onTransfer for the new conversation if it too is
+                        // transferred.
+                        if unprefixedConversationID != currentConversationID {
+                            currentConversationID = unprefixedConversationID
+                            transferredToHumanAgent = false
+                        }
                         optionsConversationCallbacks?.onConversationStart(conversationID: unprefixedConversationID)
                     }
+                    updateActionMenu()
                 case "onTransfer":
                     if let dataJSONStr = body["dataJSONStr"] as? String {
                         if let transfer = ConversationTransfer.fromJSON(dataJSONStr) {
+                            // A synchronous transfer hands the conversation off and continues it in
+                            // this chat (the user waits for / talks to a live agent); contact-center
+                            // transfers always continue in chat too. In both cases reconnecting to
+                            // voice would resume the now-inactive virtual agent, so hide the button.
+                            if transfer.isSynchronous || transfer.isContactCenter {
+                                transferredToHumanAgent = true
+                                updateActionMenu()
+                            }
                             optionsConversationCallbacks?.onConversationTransfer(transfer: transfer)
                         }
                     }
@@ -802,6 +851,10 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                         optionsConversationCallbacks?.onRequestEndConversationEnabledChange(enabled)
                     }
                 case "onExternalAgentJoin":
+                    // Backstop for onTransfer (e.g. resuming into a conversation a human agent has
+                    // already joined): the conversation is now text-based with the human agent.
+                    transferredToHumanAgent = true
+                    updateActionMenu()
                     let externalConversationID = body["externalConversationID"] as? String
                     let externalAgentID = body["externalAgentID"] as? String
                     optionsConversationCallbacks?.onExternalAgentJoin(externalConversationID: externalConversationID, externalAgentID: externalAgentID)
@@ -1121,8 +1174,10 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
         }
     }
 
-    /// End the current conversation programmatically
-    /// This is the public API that customers can call themselves.
+    /// End the current conversation programmatically.
+    /// This is the public API that customers can call themselves. When
+    /// `confirmEndConversation` is enabled, the user is asked to confirm before
+    /// the conversation actually ends.
     public func endConversation() async {
         debugLog("Ending conversation")
         do {
