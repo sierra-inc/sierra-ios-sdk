@@ -60,6 +60,9 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     private var webView: WKWebView!
     private var isReady = false
     private var pendingAttachments: [String] = []
+    private var pendingConversationEvents: [String] = []
+    private var queuedConversationEvents: [String] = []
+    private var isConversationEventFlushScheduled = false
     private let agent: Agent
     private let options: AgentVoiceControllerOptions
     private var scriptMessageHandler: WeakScriptMessageHandler?
@@ -91,6 +94,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         webView.backgroundColor = options.voiceStyle.backgroundColor
         webView.isOpaque = false
         webView.scrollView.isScrollEnabled = true
+        webView.scrollView.keyboardDismissMode = .interactive
         webView.navigationDelegate = self
         webView.customUserAgent = getUserAgent(isWebView: true)
 
@@ -139,6 +143,10 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         if let backgroundColorHex {
             queryItems.append(URLQueryItem(name: "backgroundColor", value: backgroundColorHex))
         }
+        let messageStyleJSON = options.voiceStyle.messageStyleJSONString()
+        if !messageStyleJSON.isEmpty {
+            queryItems.append(URLQueryItem(name: "messageStyle", value: messageStyleJSON))
+        }
 
         if !queryItems.isEmpty {
             urlComponents.queryItems = queryItems
@@ -177,14 +185,33 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         }
     }
 
+    /// Push an ordered conversation event for transcript rendering.
+    public func pushConversationEvent(_ event: AgentVoiceConversationEvent) {
+        let raw: [String: Any] = [
+            "messageId": event.messageId,
+            "eventType": event.eventType,
+            "role": event.role,
+            "text": event.text,
+            "attachments": event.attachments,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: raw),
+              let json = String(data: data, encoding: .utf8) else {
+            debugLog("MobileRenderer: Failed to serialize conversation event")
+            return
+        }
+
+        if isReady {
+            enqueueConversationEvent(json)
+        } else {
+            debugLog("MobileRenderer: Page not ready, queuing conversation event (pending=\(pendingConversationEvents.count + 1))")
+            pendingConversationEvents.append(json)
+        }
+    }
+
     /// Clear all rendered content.
+    @available(*, deprecated, message: "The mobile renderer no longer supports native clear-conversation control messages.")
     public func clearConversation() {
-        debugLog("MobileRenderer: clearConversation called")
-        pendingAttachments.removeAll()
-        webView.evaluateJavaScript(
-            "if (window.sierraMobile?.clearConversation) { window.sierraMobile.clearConversation(); }",
-            completionHandler: nil
-        )
+        debugLog("MobileRenderer: clearConversation is deprecated and ignored")
     }
 
     // MARK: - JS Bridge
@@ -214,12 +241,72 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         }
     }
 
+    private func enqueueConversationEvent(_ json: String) {
+        queuedConversationEvents.append(json)
+        scheduleConversationEventFlush()
+    }
+
+    private func scheduleConversationEventFlush() {
+        guard !isConversationEventFlushScheduled else { return }
+        isConversationEventFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self] in
+            self?.flushQueuedConversationEvents()
+        }
+    }
+
+    private func flushQueuedConversationEvents() {
+        isConversationEventFlushScheduled = false
+        guard isReady, !queuedConversationEvents.isEmpty else { return }
+        let events = queuedConversationEvents
+        queuedConversationEvents.removeAll()
+        evaluatePushConversationEvents(events)
+    }
+
+    private func evaluatePushConversationEvents(_ events: [String]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: events),
+              let json = String(data: data, encoding: .utf8) else {
+            debugLog("MobileRenderer: Failed to serialize queued conversation events")
+            return
+        }
+        debugLog("MobileRenderer: calling pushConversationEvents JS (count=\(events.count), json length=\(json.count))")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await webView.callAsyncJavaScript(
+                    """
+                    const fn = window.sierraMobile?.pushConversationEvents;
+                    if (typeof fn === 'function') {
+                      return fn(json);
+                    }
+                    throw new Error('pushConversationEvents is not available');
+                    """,
+                    arguments: ["json": json],
+                    in: nil,
+                    in: .page
+                )
+                debugLog("MobileRenderer: pushConversationEvents JS executed successfully")
+            } catch {
+                debugLog("MobileRenderer: pushConversationEvents JS error: \(error)")
+                self.delegate?.mobileRenderer(self, didEncounterError: error)
+            }
+        }
+    }
+
     private func flushPendingAttachments() {
         let pending = pendingAttachments
         pendingAttachments.removeAll()
         debugLog("MobileRenderer: flushing \(pending.count) pending attachment batch(es)")
         for json in pending {
             evaluatePushAttachments(json)
+        }
+    }
+
+    private func flushPendingConversationEvents() {
+        let pending = pendingConversationEvents
+        pendingConversationEvents.removeAll()
+        debugLog("MobileRenderer: flushing \(pending.count) pending conversation event(s)")
+        for json in pending {
+            enqueueConversationEvent(json)
         }
     }
 
@@ -245,6 +332,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         case "onOpen":
             debugLog("MobileRenderer: WebView ready")
             isReady = true
+            flushPendingConversationEvents()
             flushPendingAttachments()
 
         case "onSVPClientEvent":

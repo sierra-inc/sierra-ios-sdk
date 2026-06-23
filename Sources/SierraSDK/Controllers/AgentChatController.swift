@@ -369,16 +369,9 @@ extension AgentChatControllerOptions {
         if let co = conversationOptions {
             let locale = co.locale ?? Locale.current
             queryItems.append(URLQueryItem(name: "locale", value: locale.identifier))
-            if let variables = co.variables {
-                for (name, value) in variables {
-                    queryItems.append(URLQueryItem(name: "variable", value: "\(name):\(value)"))
-                }
-            }
-            if let secrets = co.secrets {
-                for (name, value) in secrets {
-                    queryItems.append(URLQueryItem(name: "secret", value: "\(name):\(value)"))
-                }
-            }
+            // Variables and secrets are intentionally not added to the URL. They are delivered to
+            // the web embed via the window.__sierraInitialMemory bridge global (see
+            // addInitialMemoryUserScript) so they cannot leak into device, proxy, or analytics logs.
             if let enableContactCenter = co.enableContactCenter {
                 queryItems.append(URLQueryItem(name: "enableContactCenter", value: "\(enableContactCenter)"))
             }
@@ -479,6 +472,8 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private var showingConversationList = false
     private var isPageVisible = false
     private var lifecycleObservers: [NSObjectProtocol] = []
+    private var didRevealContent = false
+    private var revealFallbackWorkItem: DispatchWorkItem?
 
     /// Creates a chat controller backed by a WKWebView.
     ///
@@ -579,6 +574,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         // stored conversation state synchronously during init.
         addStorageUserScript(to: contentController)
         addCapabilitiesUserScript(to: contentController)
+        addInitialMemoryUserScript(to: contentController)
 
         applyAppBoundDomainsConfig(configuration)
         webView = CustomWebView(frame: .zero, configuration: configuration)
@@ -678,10 +674,16 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private func reloadWebViewForAppearanceChange() {
         webViewLoaded = false
         isPageVisible = false
+        didRevealContent = false
+        revealFallbackWorkItem?.cancel()
+        revealFallbackWorkItem = nil
+        webView.scrollView.alpha = 0.0
+        loadingSpinner?.startAnimating()
         let contentController = webView.configuration.userContentController
         contentController.removeAllUserScripts()
         addStorageUserScript(to: contentController)
         addCapabilitiesUserScript(to: contentController)
+        addInitialMemoryUserScript(to: contentController)
         loadChatURL()
     }
 
@@ -708,6 +710,30 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
             forMainFrameOnly: true
         )
         contentController.addUserScript(capabilitiesScript)
+    }
+
+    /// Delivers the initial agent memory (variables and secrets) to the web embed via a
+    /// document-start global instead of URL query parameters, so the values cannot leak into
+    /// device, proxy, or analytics logs.
+    private func addInitialMemoryUserScript(to contentController: WKUserContentController) {
+        var memory: [String: [String: String]] = [:]
+        if let variables = options.conversationOptions?.variables, !variables.isEmpty {
+            memory["variables"] = variables
+        }
+        if let secrets = options.conversationOptions?.secrets, !secrets.isEmpty {
+            memory["secrets"] = secrets
+        }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: memory),
+              let jsonString = String(data: jsonData, encoding: .utf8)
+        else {
+            return
+        }
+        let memoryScript = WKUserScript(
+            source: "window.__sierraInitialMemory = \(jsonString);",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        contentController.addUserScript(memoryScript)
     }
 
     private func loadChatURL() {
@@ -793,6 +819,38 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         )
     }
 
+    /// How long to keep the spinner up for a resumed conversation while waiting for
+    /// `onConversationReady`. Only reached when the embed does not send that message (e.g. an
+    /// older embed build); the normal path reveals as soon as the transcript has rendered.
+    private static let revealFallbackInterval: TimeInterval = 10
+
+    /// Stops the loading spinner and fades in the web content. Idempotent: the reveal animation
+    /// runs only once per load. Cancels any pending fallback reveal.
+    private func revealWebContent() {
+        revealFallbackWorkItem?.cancel()
+        revealFallbackWorkItem = nil
+        guard !didRevealContent else { return }
+        didRevealContent = true
+        loadingSpinner?.stopAnimating()
+        UIView.animate(withDuration: 0.3, animations: {
+            self.webView.scrollView.alpha = 1.0
+        })
+    }
+
+    /// Keeps the spinner up for a resumed conversation until `onConversationReady` arrives,
+    /// scheduling a fallback reveal so the spinner is never stranded if that message never comes.
+    private func scheduleRevealFallback() {
+        guard !didRevealContent, revealFallbackWorkItem == nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.revealWebContent()
+        }
+        revealFallbackWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.revealFallbackInterval,
+            execute: workItem
+        )
+    }
+
     // MARK: - WKScriptMessageHandler
 
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -802,17 +860,27 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
             if let type = body["type"] as? String {
                 switch type {
                 case "onOpen":
-                    // Fade in only the content with a smooth animation
+                    let isNewConversation = body["isNewConversation"] as? Bool ?? true
                     DispatchQueue.main.async {
                         self.webViewLoaded = true
-                        self.loadingSpinner?.stopAnimating()
                         // If we became visible before the web content finished loading,
                         // ensure that appstatuschange is dispatched now.
                         self.dispatchAppStatusChange(true)
 
-                        UIView.animate(withDuration: 0.3, animations: {
-                            self.webView.scrollView.alpha = 1.0
-                        })
+                        if isNewConversation {
+                            // New conversation: the greeting is already rendered, so reveal now.
+                            self.revealWebContent()
+                        } else {
+                            // Resuming an existing conversation: keep the spinner up until the
+                            // transcript has rendered (onConversationReady) so we don't flash an
+                            // empty greeting state. A fallback timer guards against older embeds
+                            // that never send onConversationReady.
+                            self.scheduleRevealFallback()
+                        }
+                    }
+                case "onConversationReady":
+                    DispatchQueue.main.async {
+                        self.revealWebContent()
                     }
                 case "onConversationIDAvailable":
                     if let unprefixedConversationID = body["unprefixedConversationID"] as? String {

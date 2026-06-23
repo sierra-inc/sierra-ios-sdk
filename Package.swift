@@ -16,6 +16,9 @@ let package = Package(
         .library(
             name: "SierraSDKVoice",
             targets: ["SierraSDKVoice"]),
+        .library(
+            name: "SierraChatKit",
+            targets: ["SierraChatKit"]),
     ],
     dependencies: [],
     targets: [
@@ -32,7 +35,7 @@ let package = Package(
         ),
         .target(
             name: "SierraSDKVoice",
-            dependencies: ["SierraSDK"],
+            dependencies: ["SierraSDK", "SierraChatKit"],
             resources: [
               .process("Resources")
             ],
@@ -40,6 +43,16 @@ let package = Package(
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("UIKit"),
                 .linkedFramework("WebKit")
+            ]
+        ),
+        .target(
+            name: "SierraChatKit",
+            dependencies: [],
+            resources: [
+              .process("Resources")
+            ],
+            linkerSettings: [
+                .linkedFramework("UIKit")
             ]
         ),
         .testTarget(

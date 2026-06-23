@@ -2,6 +2,7 @@
 
 import AVFoundation
 import SierraSDK
+import SierraChatKit
 import UIKit
 
 public struct AgentAttachment {
@@ -24,8 +25,8 @@ public struct AgentAttachment {
     }
 }
 
-// AgentEvent attachment type consumed by the native voice layer to reset rendered cards.
-private let clearConversationRendererType = "clear-conversation-renderer"
+private let defaultMutePillBackgroundColor = UIColor(red: 231 / 255, green: 231 / 255, blue: 231 / 255, alpha: 1)
+private let defaultMutePillIconColor = UIColor(red: 17 / 255, green: 17 / 255, blue: 17 / 255, alpha: 1)
 
 public struct AgentVoiceStyle {
     /// Background color for the native voice screen.
@@ -37,23 +38,28 @@ public struct AgentVoiceStyle {
     /// Text/icon color for the native navigation bar.
     public var titleBarTextColor: UIColor
 
-    /// Fill color for the mute/end controls.
-    public var controlsColor: UIColor
+    /// Legacy control tint retained for compatibility with existing style initializers.
+    /// The default center placeholder keeps the original system waveform styling.
+    @available(*, deprecated, message: "No longer applied; pass colors to the legacy/pill buttons directly.")
+    public var controlsColor: UIColor {
+        get { legacyControlsColor }
+        set { legacyControlsColor = newValue }
+    }
 
-    /// Optional fill color override for the mute button.
+    internal var legacyControlsColor: UIColor
+
+    /// Optional fill color override for the mute button. Defaults to `#E7E7E7`.
     public var muteButtonColor: UIColor?
 
-    /// Optional fill color override for the end conversation button.
+    /// Optional fill color override for the end conversation button. Defaults to a red pill.
     public var endConversationButtonColor: UIColor?
 
-    /// Tint color applied to the mute button glyph. Defaults to white.
-    /// Set this to a darker color when using a white mute background so the
-    /// glyph remains visible.
+    /// Tint color applied to the mute button glyph and label.
+    /// Defaults to `#111111` for the light default mute pill; set this explicitly when using a
+    /// dark custom mute button color.
     public var muteButtonIconColor: UIColor
 
-    /// Tint color applied to the end conversation button glyph. Defaults to white.
-    /// Set this to a darker color when using a white end background so the
-    /// glyph remains visible.
+    /// Tint color applied to the end conversation button glyph and label.
     public var endConversationButtonIconColor: UIColor
 
     /// Text color for the optional disclosure shown below the controls.
@@ -67,6 +73,12 @@ public struct AgentVoiceStyle {
     /// When nil, the renderer falls back to `backgroundColor`.
     public var rendererBackgroundColor: UIColor?
 
+    /// Transcript bubble colors in the mobile renderer.
+    public var messageColors: ChatStyleColors
+
+    /// Transcript bubble typography in the mobile renderer.
+    public var messageTypography: ChatStyleTypography
+
     public init(
         backgroundColor: UIColor = .systemBackground,
         titleBarColor: UIColor = .systemBackground,
@@ -74,16 +86,18 @@ public struct AgentVoiceStyle {
         controlsColor: UIColor = UIColor(red: 16 / 255, green: 34 / 255, blue: 76 / 255, alpha: 1),
         muteButtonColor: UIColor? = nil,
         endConversationButtonColor: UIColor? = nil,
-        muteButtonIconColor: UIColor = .white,
+        muteButtonIconColor: UIColor = UIColor(red: 17 / 255, green: 17 / 255, blue: 17 / 255, alpha: 1),
         endConversationButtonIconColor: UIColor = .white,
         conversationDisclosureTextColor: UIColor = .secondaryLabel,
         conversationDisclosureFont: UIFont = .systemFont(ofSize: 12, weight: .regular),
-        rendererBackgroundColor: UIColor? = nil
+        rendererBackgroundColor: UIColor? = nil,
+        messageColors: ChatStyleColors = DEFAULT_CHAT_STYLE_COLORS,
+        messageTypography: ChatStyleTypography = ChatStyleTypography()
     ) {
         self.backgroundColor = backgroundColor
         self.titleBarColor = titleBarColor
         self.titleBarTextColor = titleBarTextColor
-        self.controlsColor = controlsColor
+        self.legacyControlsColor = controlsColor
         self.muteButtonColor = muteButtonColor
         self.endConversationButtonColor = endConversationButtonColor
         self.muteButtonIconColor = muteButtonIconColor
@@ -91,6 +105,205 @@ public struct AgentVoiceStyle {
         self.conversationDisclosureTextColor = conversationDisclosureTextColor
         self.conversationDisclosureFont = conversationDisclosureFont
         self.rendererBackgroundColor = rendererBackgroundColor
+        self.messageColors = messageColors
+        self.messageTypography = messageTypography
+    }
+
+    @available(*, deprecated, message: "Use messageColors and messageTypography instead.")
+    public init(
+        backgroundColor: UIColor = .systemBackground,
+        titleBarColor: UIColor = .systemBackground,
+        titleBarTextColor: UIColor = .label,
+        controlsColor: UIColor = UIColor(red: 16 / 255, green: 34 / 255, blue: 76 / 255, alpha: 1),
+        muteButtonColor: UIColor? = nil,
+        endConversationButtonColor: UIColor? = nil,
+        muteButtonIconColor: UIColor = UIColor(red: 17 / 255, green: 17 / 255, blue: 17 / 255, alpha: 1),
+        endConversationButtonIconColor: UIColor = .white,
+        conversationDisclosureTextColor: UIColor = .secondaryLabel,
+        conversationDisclosureFont: UIFont = .systemFont(ofSize: 12, weight: .regular),
+        rendererBackgroundColor: UIColor? = nil,
+        userBubble: UIColor,
+        userBubbleText: UIColor,
+        assistantBubble: UIColor,
+        assistantBubbleText: UIColor,
+        messageFontFamily: String = "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif",
+        messageFontWeight: Int = 510,
+        messageFontSize: String = "14px",
+        messageLineHeight: String = "20px",
+        messageLetterSpacing: String = "-0.32px"
+    ) {
+        let fontSize = Self.cssPixelValue(messageFontSize).map { max(1, Int($0.rounded())) }
+        let fontSizeDouble = Self.cssPixelValue(messageFontSize)
+        self.init(
+            backgroundColor: backgroundColor,
+            titleBarColor: titleBarColor,
+            titleBarTextColor: titleBarTextColor,
+            controlsColor: controlsColor,
+            muteButtonColor: muteButtonColor,
+            endConversationButtonColor: endConversationButtonColor,
+            muteButtonIconColor: muteButtonIconColor,
+            endConversationButtonIconColor: endConversationButtonIconColor,
+            conversationDisclosureTextColor: conversationDisclosureTextColor,
+            conversationDisclosureFont: conversationDisclosureFont,
+            rendererBackgroundColor: rendererBackgroundColor,
+            messageColors: ChatStyleColors(
+                assistantBubble: assistantBubble,
+                assistantBubbleText: assistantBubbleText,
+                userBubble: userBubble,
+                userBubbleText: userBubbleText
+            ),
+            messageTypography: ChatStyleTypography(
+                fontFamily: messageFontFamily,
+                fontSize: fontSize,
+                fontWeight: messageFontWeight,
+                lineHeight: Self.cssPixelValue(messageLineHeight).flatMap { lineHeight in
+                    fontSizeDouble.map { lineHeight / $0 }
+                },
+                letterSpacing: Self.cssPixelValue(messageLetterSpacing).flatMap { letterSpacing in
+                    fontSizeDouble.map { letterSpacing / $0 }
+                }
+            )
+        )
+    }
+
+    private static func cssPixelValue(_ value: String) -> Double? {
+        guard value.hasSuffix("px") else { return nil }
+        return Double(value.dropLast(2))
+    }
+}
+
+extension AgentVoiceStyle {
+    /// User transcript bubble background color in the mobile renderer.
+    @available(*, deprecated, message: "Use messageColors instead.")
+    public var userBubble: UIColor {
+        get { messageColors.userBubble }
+        set { messageColors = messageColors.with(userBubble: newValue) }
+    }
+
+    /// User transcript text color in the mobile renderer.
+    @available(*, deprecated, message: "Use messageColors instead.")
+    public var userBubbleText: UIColor {
+        get { messageColors.userBubbleText }
+        set { messageColors = messageColors.with(userBubbleText: newValue) }
+    }
+
+    /// Assistant transcript bubble background color in the mobile renderer.
+    @available(*, deprecated, message: "Use messageColors instead.")
+    public var assistantBubble: UIColor {
+        get { messageColors.assistantBubble }
+        set { messageColors = messageColors.with(assistantBubble: newValue) }
+    }
+
+    /// Assistant transcript text color in the mobile renderer.
+    @available(*, deprecated, message: "Use messageColors instead.")
+    public var assistantBubbleText: UIColor {
+        get { messageColors.assistantBubbleText }
+        set { messageColors = messageColors.with(assistantBubbleText: newValue) }
+    }
+
+    /// Transcript bubble font family in the mobile renderer.
+    @available(*, deprecated, message: "Use messageTypography instead.")
+    public var messageFontFamily: String {
+        get { messageTypography.fontFamily ?? "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif" }
+        set { messageTypography = messageTypography.with(fontFamily: newValue) }
+    }
+
+    /// Transcript bubble font weight in the mobile renderer.
+    @available(*, deprecated, message: "Use messageTypography instead.")
+    public var messageFontWeight: Int {
+        get { messageTypography.fontWeight ?? 510 }
+        set { messageTypography = messageTypography.with(fontWeight: newValue) }
+    }
+
+    /// Transcript bubble font size in CSS pixels.
+    @available(*, deprecated, message: "Use messageTypography instead.")
+    public var messageFontSize: String {
+        get { "\(messageTypography.fontSize ?? 14)px" }
+        set {
+            messageTypography = messageTypography.with(
+                fontSize: Self.cssPixelValue(newValue).map { max(1, Int($0.rounded())) }
+            )
+        }
+    }
+
+    /// Transcript bubble line height in CSS pixels.
+    @available(*, deprecated, message: "Use messageTypography instead.")
+    public var messageLineHeight: String {
+        get {
+            guard let lineHeight = messageTypography.lineHeight else { return "20px" }
+            return "\(lineHeight * Double(messageTypography.fontSize ?? 14))px"
+        }
+        set {
+            let fontSize = Double(messageTypography.fontSize ?? 14)
+            messageTypography = messageTypography.with(
+                lineHeight: Self.cssPixelValue(newValue).map { $0 / fontSize }
+            )
+        }
+    }
+
+    /// Transcript bubble letter spacing in CSS pixels.
+    @available(*, deprecated, message: "Use messageTypography instead.")
+    public var messageLetterSpacing: String {
+        get {
+            guard let letterSpacing = messageTypography.letterSpacing else { return "-0.32px" }
+            return "\(letterSpacing * Double(messageTypography.fontSize ?? 14))px"
+        }
+        set {
+            let fontSize = Double(messageTypography.fontSize ?? 14)
+            messageTypography = messageTypography.with(
+                letterSpacing: Self.cssPixelValue(newValue).map { $0 / fontSize }
+            )
+        }
+    }
+
+    func messageStyleJSONString() -> String {
+        ChatStyle(colors: messageColors, typography: messageTypography).toJSONString()
+    }
+}
+
+private extension ChatStyleColors {
+    func with(
+        assistantBubble: UIColor? = nil,
+        assistantBubbleText: UIColor? = nil,
+        userBubble: UIColor? = nil,
+        userBubbleText: UIColor? = nil
+    ) -> ChatStyleColors {
+        ChatStyleColors(
+            backgroundColor: backgroundColor,
+            text: text,
+            border: border,
+            assistantBubble: assistantBubble ?? self.assistantBubble,
+            assistantBubbleText: assistantBubbleText ?? self.assistantBubbleText,
+            userBubble: userBubble ?? self.userBubble,
+            userBubbleText: userBubbleText ?? self.userBubbleText,
+            newChatButton: newChatButton,
+            uploadButtonIcon: uploadButtonIcon,
+            disclosureText: disclosureText,
+            errorText: errorText,
+            humanAgentTransferWaitingText: statusText,
+            titleBar: titleBar,
+            titleBarText: titleBarText,
+            tintColor: tintColor
+        )
+    }
+}
+
+private extension ChatStyleTypography {
+    func with(
+        fontFamily: String? = nil,
+        fontSize: Int? = nil,
+        fontWeight: Int? = nil,
+        lineHeight: Double? = nil,
+        letterSpacing: Double? = nil
+    ) -> ChatStyleTypography {
+        ChatStyleTypography(
+            fontFamily: fontFamily ?? self.fontFamily,
+            fontSize: fontSize ?? self.fontSize,
+            fontWeight: fontWeight ?? self.fontWeight,
+            lineHeight: lineHeight ?? self.lineHeight,
+            letterSpacing: letterSpacing ?? self.letterSpacing,
+            customFonts: customFonts
+        )
     }
 }
 
@@ -109,6 +322,35 @@ public struct AgentVoiceControllerOptions {
     /// Customize the look and feel of native voice UI elements.
     public var voiceStyle: AgentVoiceStyle = AgentVoiceStyle()
 
+    /// Optional override for the native mute button component.
+    public var muteButton: UIButton?
+
+    /// Optional override for the native unmute button component.
+    public var unmuteButton: UIButton?
+
+    /// Optional override for the native end-call button component.
+    public var endCallButton: UIButton?
+
+    /// Optional override for the compact mute button shown while the text composer is focused.
+    public var compactMuteButton: UIButton?
+
+    /// Optional override for the compact unmute button shown while the text composer is focused.
+    public var compactUnmuteButton: UIButton?
+
+    /// Optional override for the compact end-call button shown while the text composer is focused.
+    public var compactEndCallButton: UIButton?
+
+    /// Optional override for the native text composer component.
+    public var textComposerView: VoiceTextComposerView?
+
+    /// Optional spacing override for the native mute/end controls row.
+    /// Set this when providing custom buttons that need a spacing different from the SDK defaults.
+    public var controlsSpacing: CGFloat?
+
+    /// Optional distribution override for the native mute/end controls row.
+    /// Set this when providing custom buttons that should not use the SDK's pill or legacy layout.
+    public var controlsDistribution: UIStackView.Distribution?
+
     /// Text shown in the native voice waveform placeholder before the first
     /// renderable attachment is displayed.
     public var voicePlaceholderText: String = "How can I help you today?"
@@ -125,6 +367,7 @@ public struct AgentVoiceControllerOptions {
 
     /// Optional icon override for the mute button. Use an SVG/vector asset from
     /// the host app asset catalog or any template `UIImage`.
+    /// When set, this replaces the default animated waveform.
     public var muteIcon: UIImage?
 
     /// Optional icon override for the muted state. Defaults to the SDK mic-off icon.
@@ -160,6 +403,12 @@ public struct AgentVoiceControllerOptions {
 
     /// Sent as `forwardAgentAttachments` in the SVP `open` submessage. Defaults to `true`.
     public var forwardAgentAttachments: Bool = true
+
+    /// When true, adds a text input and conversation-event transcript to the native voice surface.
+    public var enableTextInput: Bool = false
+
+    /// Placeholder shown in the native text composer.
+    public var textComposerPlaceholder: String = "Type a reply"
 
     public init(name: String) {
         self.name = name
@@ -209,12 +458,34 @@ public struct AgentVoiceControllerOptions {
 
 }
 
+public extension AgentVoiceControllerOptions {
+    /// Replaces the default pill controls with the legacy circular controls.
+    ///
+    /// Reuses the `muteIcon`, `mutedIcon`, and `endConversationIcon` overrides when set, falling back
+    /// to the SDK's circular-control glyphs otherwise. With no arguments this reproduces the pre-pill
+    /// appearance using `voiceStyle.muteButtonColor`, `voiceStyle.endConversationButtonColor`,
+    /// `voiceStyle.endConversationButtonIconColor`, and `voiceStyle.controlsColor`. Pass
+    /// `backgroundColor` or `iconColor` to force all controls to the same fill or glyph color.
+    mutating func useLegacyVoiceControls(
+        backgroundColor: UIColor? = nil,
+        iconColor: UIColor? = nil
+    ) {
+        let muteBackground = backgroundColor ?? voiceStyle.muteButtonColor ?? voiceStyle.legacyControlsColor
+        let endCallBackground = backgroundColor ?? voiceStyle.endConversationButtonColor ?? voiceStyle.legacyControlsColor
+        let muteIconColor = iconColor ?? .white
+        let endCallIconColor = iconColor ?? voiceStyle.endConversationButtonIconColor
+        muteButton = MuteButtonLegacy(backgroundColor: muteBackground, iconColor: muteIconColor, muteIcon: muteIcon)
+        unmuteButton = UnmuteButtonLegacy(backgroundColor: muteBackground, iconColor: muteIconColor, unmuteIcon: mutedIcon)
+        endCallButton = EndCallButtonLegacy(backgroundColor: endCallBackground, iconColor: endCallIconColor, icon: endConversationIcon)
+    }
+}
+
 /// Displays a native voice conversation with an embedded WebView for rendering
 /// agent attachments. Voice audio is handled natively via VoiceSessionManager
 /// (SVP WebSocket), while attachments are rendered by a MobileRendererView
 /// that loads the agent's web bundle directly -- no conversation state, no
 /// credential seeding, no refresh polling.
-public class AgentVoiceController: UIViewController, VoiceSessionDelegate, MobileRendererDelegate {
+public class AgentVoiceController: UIViewController, VoiceSessionDelegate, MobileRendererDelegate, UITextFieldDelegate {
     private let agent: Agent
     private var options: AgentVoiceControllerOptions
     private var voiceSession: VoiceSessionManager?
@@ -226,6 +497,8 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private var pendingRenderableAttachmentBatches: [[[String: Any]]] = []
     private var lastRenderableAttachmentsSignature: String?
     private var isMuted = false
+    private var latestInputAudioLevel: Float = 0
+    private var latestOutputAudioLevel: Float = 0
 
     private let placeholderContainer = UIView()
     private let placeholderWaveformIcon = UIImageView()
@@ -235,9 +508,18 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private let errorBannerView = UIView()
     private let errorBannerLabel = UILabel()
 
-    private let muteButton = UIButton(type: .system)
-    private let endButton = UIButton(type: .system)
+    private var muteButton: UIButton?
+    private var unmuteButton: UIButton?
+    private var endButton: UIButton?
+    private var compactMuteButton: UIButton?
+    private var compactUnmuteButton: UIButton?
+    private var compactEndButton: UIButton?
+    private var muteLevelDisplay: VoiceMuteLevelDisplaying?
+    private var compactMuteLevelDisplay: VoiceMuteLevelDisplaying?
     private let controlsContainer = UIView()
+    private var textComposerView: VoiceTextComposerView?
+    private var normalButtonsStack: UIStackView?
+    private var compactButtonsStack: UIStackView?
     private let disclosureLabel = UILabel()
     private var previousNavigationBarHidden: Bool?
     private var hasShutdownVoiceSession = false
@@ -343,10 +625,14 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             agentParameters: voiceAgentParameters,
             enableText: options.enableText,
             forwardAgentAttachments: options.forwardAgentAttachments,
+            enableConversationEvents: options.enableTextInput,
             delegate: self
         )
         self.voiceSession = session
         self.secretRefreshOrchestrator = SecretRefreshOrchestrator(voiceSession: session, callbacks: voiceCallbacks)
+        if options.enableTextInput {
+            ensureMobileRendererLoaded()
+        }
         session.connect()
         updateUI(for: .connecting)
     }
@@ -398,6 +684,35 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         }
     }
 
+    public func voiceSession(_ session: VoiceSessionManager, didUpdateInputAudioLevel level: Float) {
+        guard !isMuted else { return }
+        latestInputAudioLevel = level
+        muteLevelDisplay?.setInputLevel(level)
+        if compactButtonsStack?.isHidden == false {
+            compactMuteLevelDisplay?.setInputLevel(level)
+        }
+    }
+
+    public func voiceSession(_ session: VoiceSessionManager, didUpdateOutputAudioLevel level: Float) {
+        latestOutputAudioLevel = level
+        muteLevelDisplay?.setOutputLevel(level)
+        if compactButtonsStack?.isHidden == false {
+            compactMuteLevelDisplay?.setOutputLevel(level)
+        }
+    }
+
+    public func voiceSession(_ session: VoiceSessionManager, didReceiveConversationEvent event: AgentVoiceConversationEvent) {
+        DispatchQueue.main.async {
+            guard self.options.enableTextInput, !self.rendererFailed else {
+                return
+            }
+            self.ensureMobileRendererLoaded()
+            self.revealRendererContentIfNeeded()
+            self.markInitialGreetingReceivedIfNeeded()
+            self.renderer?.pushConversationEvent(event)
+        }
+    }
+
     public func voiceSession(_ session: VoiceSessionManager, didReceiveAttachments attachments: [[String: Any]]) {
         // Peel off any secret_refresh custom attachments and route them to
         // the orchestrator. The renderer cannot handle these and the host's
@@ -425,26 +740,23 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             "AgentVoiceController: received \(attachments.count) attachment(s) from SVP, types=\(attachmentTypes), renderer=\(renderer != nil ? "ready" : "nil")"
         )
 
-        let shouldClearRenderer = attachments.contains(where: isClearConversationAttachment)
-        let renderableAttachments = attachments.filter { !isClearConversationAttachment($0) }
-
-        if shouldClearRenderer {
-            lastRenderableAttachmentsSignature = nil
-            debugLog("AgentVoiceController: received clear-conversation signal; scheduling renderer reset")
-            DispatchQueue.main.async {
-                self.clearConversation()
-            }
+        if options.enableTextInput {
+            // Text input mode renders assistant text and attachments from ordered conversation
+            // events so cards stay attached to the transcript message they belong to. Rendering
+            // attachments_server batches as well would duplicate those cards and can reorder them.
+            debugLog("AgentVoiceController: skipping attachments_server render because enableTextInput uses conversation events")
+            return
         }
 
-        if !renderableAttachments.isEmpty {
-            let signature = renderableBatchSignature(renderableAttachments)
+        if !attachments.isEmpty {
+            let signature = renderableBatchSignature(attachments)
             if let signature, signature == lastRenderableAttachmentsSignature {
                 debugLog("AgentVoiceController: dropping duplicate renderable attachment batch")
                 return
             }
             lastRenderableAttachmentsSignature = signature
 
-            let agentAttachments = renderableAttachments.compactMap(AgentAttachment.init(raw:))
+            let agentAttachments = attachments.compactMap(AgentAttachment.init(raw:))
             DispatchQueue.main.async {
                 if !agentAttachments.isEmpty {
                     self.voiceCallbacks?.didReceiveAgentAttachment(attachments: agentAttachments)
@@ -460,16 +772,12 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
                     return
                 }
 
-                if !self.hasShownFirstAttachment {
-                    self.hasShownFirstAttachment = true
-                    self.placeholderContainer.isHidden = true
-                    self.renderer?.isHidden = false
-                }
+                self.revealRendererContentIfNeeded()
 
                 if let renderer = self.renderer {
-                    renderer.pushAttachments(renderableAttachments)
+                    renderer.pushAttachments(attachments)
                 } else {
-                    self.pendingRenderableAttachmentBatches.append(renderableAttachments)
+                    self.pendingRenderableAttachmentBatches.append(attachments)
                 }
             }
         } else {
@@ -484,27 +792,12 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         return data.base64EncodedString()
     }
 
-    private func isClearConversationAttachment(_ attachment: [String: Any]) -> Bool {
-        guard
-            let attachmentType = attachment["type"] as? String,
-            attachmentType == "custom",
-            let data = attachment["data"] as? [String: Any],
-            let dataType = data["type"] as? String
-        else {
-            return false
-        }
-        return dataType == clearConversationRendererType
-    }
-
-    private func clearConversation() {
-        let pendingBatchCount = pendingRenderableAttachmentBatches.count
-        let rendererState = renderer != nil ? "ready" : "nil"
-        debugLog(
-            "AgentVoiceController: clearing conversation (pendingBatches=\(pendingBatchCount), renderer=\(rendererState))"
-        )
-        pendingRenderableAttachmentBatches.removeAll()
-        renderer?.clearConversation()
-        debugLog("AgentVoiceController: conversation cleared")
+    private func revealRendererContentIfNeeded() {
+        guard !hasShownFirstAttachment else { return }
+        hasShownFirstAttachment = true
+        placeholderContainer.isHidden = true
+        stopWaveformAnimation()
+        renderer?.isHidden = false
     }
 
     public func voiceSession(_ session: VoiceSessionManager, didEncounterError error: Error) {
@@ -720,43 +1013,178 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     // MARK: - Bottom Controls
 
-    private let controlButtonSize: CGFloat = 56
-
     private func setupBottomControls() {
         controlsContainer.translatesAutoresizingMaskIntoConstraints = false
         controlsContainer.backgroundColor = .clear
         view.addSubview(controlsContainer)
 
-        let controlsColor = options.voiceStyle.controlsColor
-        let muteButtonColor = options.voiceStyle.muteButtonColor ?? controlsColor
-        let endConversationButtonColor = options.voiceStyle.endConversationButtonColor ?? controlsColor
-
-        configureControlButton(
-            muteButton,
-            image: options.muteIcon ?? UIImage(systemName: "mic.fill"),
-            backgroundColor: muteButtonColor,
-            iconColor: options.voiceStyle.muteButtonIconColor,
-            accessibilityLabel: "Mute microphone",
-            action: #selector(muteTapped)
+        let muteButton = options.muteButton ?? defaultMuteButton()
+        let unmuteButton = options.unmuteButton ?? defaultUnmuteButton()
+        let endCallButton = options.endCallButton ?? defaultEndCallButton()
+        let buttonsStack = makeControlButtonsStack(
+            muteButton: muteButton,
+            unmuteButton: unmuteButton,
+            endButton: endCallButton
         )
+        configureControlsLayout(buttonsStack: buttonsStack)
+    }
 
-        configureControlButton(
-            endButton,
-            image: options.endConversationIcon ?? UIImage(systemName: "xmark"),
+    private func defaultMuteButton() -> UIButton {
+        let muteButtonColor = options.voiceStyle.muteButtonColor ?? defaultMutePillBackgroundColor
+        return MuteButtonPill(
+            backgroundColor: muteButtonColor,
+            iconColor: defaultMuteButtonIconColor(for: muteButtonColor),
+            muteIcon: options.muteIcon,
+            waveformIcon: nil
+        )
+    }
+
+    private func defaultUnmuteButton() -> UIButton {
+        let muteButtonColor = options.voiceStyle.muteButtonColor ?? defaultMutePillBackgroundColor
+        return UnmuteButtonPill(
+            backgroundColor: muteButtonColor,
+            unmuteIcon: options.mutedIcon
+        )
+    }
+
+    private func defaultMuteButtonIconColor(for backgroundColor: UIColor) -> UIColor {
+        let configuredIconColor = options.voiceStyle.muteButtonIconColor
+        guard
+            options.voiceStyle.muteButtonColor != nil,
+            configuredIconColor.matches(defaultMutePillIconColor, using: traitCollection)
+        else {
+            return configuredIconColor
+        }
+        return backgroundColor.contrastingBlackOrWhite(using: traitCollection)
+    }
+
+    private func defaultEndCallButton() -> UIButton {
+        let endConversationButtonColor = options.voiceStyle.endConversationButtonColor ?? UIColor(red: 242 / 255, green: 75 / 255, blue: 39 / 255, alpha: 1)
+        return EndCallButtonPill(
             backgroundColor: endConversationButtonColor,
             iconColor: options.voiceStyle.endConversationButtonIconColor,
-            accessibilityLabel: "Close conversation",
-            action: #selector(endTapped)
+            icon: options.endConversationIcon
         )
+    }
+
+    private func makeControlButtonsStack(
+        muteButton: UIButton,
+        unmuteButton: UIButton,
+        endButton: UIButton
+    ) -> UIStackView {
+        muteButton.addTarget(self, action: #selector(muteTapped), for: .touchUpInside)
+        unmuteButton.addTarget(self, action: #selector(muteTapped), for: .touchUpInside)
+        endButton.addTarget(self, action: #selector(endTapped), for: .touchUpInside)
+
+        self.muteButton = muteButton
+        self.unmuteButton = unmuteButton
+        self.endButton = endButton
+        muteLevelDisplay = muteButton as? VoiceMuteLevelDisplaying
 
         let buttonsStack = UIStackView()
         buttonsStack.translatesAutoresizingMaskIntoConstraints = false
         buttonsStack.axis = .horizontal
         buttonsStack.alignment = .center
-        buttonsStack.spacing = 28
-        buttonsStack.addArrangedSubview(muteButton)
+        if usesLegacyControls(muteButton: muteButton, unmuteButton: unmuteButton, endButton: endButton) {
+            buttonsStack.distribution = .fill
+            buttonsStack.spacing = 28
+        } else {
+            buttonsStack.distribution = .fillEqually
+            buttonsStack.spacing = 10
+        }
+        if let controlsDistribution = options.controlsDistribution {
+            buttonsStack.distribution = controlsDistribution
+        }
+        if let controlsSpacing = options.controlsSpacing {
+            buttonsStack.spacing = controlsSpacing
+        }
+        buttonsStack.addArrangedSubview(makeMuteToggleContainer(muteButton: muteButton, unmuteButton: unmuteButton))
         buttonsStack.addArrangedSubview(endButton)
+        updateMuteControl(isMuted: false)
+        normalButtonsStack = buttonsStack
+        return buttonsStack
+    }
 
+    private func usesLegacyControls(muteButton: UIButton, unmuteButton: UIButton, endButton: UIButton) -> Bool {
+        muteButton is MuteButtonLegacy ||
+            unmuteButton is UnmuteButtonLegacy ||
+            endButton is EndCallButtonLegacy
+    }
+
+    private func makeMuteToggleContainer(muteButton: UIButton, unmuteButton: UIButton) -> UIView {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        for button in [muteButton, unmuteButton] {
+            container.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.topAnchor.constraint(equalTo: container.topAnchor),
+                button.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                button.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                button.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            ])
+        }
+
+        return container
+    }
+
+    private func makeCompactControlButtonsStack() -> UIStackView {
+        let muteButton = options.compactMuteButton ?? defaultCompactMuteButton()
+        let unmuteButton = options.compactUnmuteButton ?? defaultCompactUnmuteButton()
+        let endButton = options.compactEndCallButton ?? defaultCompactEndCallButton()
+
+        muteButton.addTarget(self, action: #selector(muteTapped), for: .touchUpInside)
+        unmuteButton.addTarget(self, action: #selector(muteTapped), for: .touchUpInside)
+        endButton.addTarget(self, action: #selector(endTapped), for: .touchUpInside)
+
+        compactMuteButton = muteButton
+        compactUnmuteButton = unmuteButton
+        compactEndButton = endButton
+        compactMuteLevelDisplay = muteButton as? VoiceMuteLevelDisplaying
+
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 8
+        stack.addArrangedSubview(makeMuteToggleContainer(muteButton: muteButton, unmuteButton: unmuteButton))
+        stack.addArrangedSubview(endButton)
+        compactButtonsStack = stack
+        updateMuteControl(isMuted: isMuted)
+        return stack
+    }
+
+    private func defaultCompactMuteButton() -> UIButton {
+        let muteButtonColor = options.voiceStyle.muteButtonColor ?? defaultMutePillBackgroundColor
+        return MuteButtonPill(
+            backgroundColor: muteButtonColor,
+            iconColor: defaultMuteButtonIconColor(for: muteButtonColor),
+            muteIcon: options.muteIcon,
+            layout: .compact
+        )
+    }
+
+    private func defaultCompactUnmuteButton() -> UIButton {
+        let muteButtonColor = options.voiceStyle.muteButtonColor ?? defaultMutePillBackgroundColor
+        return UnmuteButtonPill(
+            backgroundColor: muteButtonColor,
+            unmuteIcon: options.mutedIcon,
+            title: "Unmute",
+            layout: .compact
+        )
+    }
+
+    private func defaultCompactEndCallButton() -> UIButton {
+        let endConversationButtonColor = options.voiceStyle.endConversationButtonColor ?? UIColor(red: 242 / 255, green: 75 / 255, blue: 39 / 255, alpha: 1)
+        return EndCallButtonPill(
+            backgroundColor: endConversationButtonColor,
+            iconColor: options.voiceStyle.endConversationButtonIconColor,
+            icon: options.endConversationIcon,
+            layout: .compact
+        )
+    }
+
+    private func configureControlsLayout(buttonsStack: UIStackView) {
         disclosureLabel.translatesAutoresizingMaskIntoConstraints = false
         disclosureLabel.text = options.disclosureText
         disclosureLabel.textColor = options.voiceStyle.conversationDisclosureTextColor
@@ -770,49 +1198,90 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         controlsStack.translatesAutoresizingMaskIntoConstraints = false
         controlsStack.axis = .vertical
         controlsStack.alignment = .center
-        controlsStack.spacing = disclosureLabel.isHidden ? 0 : 18
+        controlsStack.spacing = 12
+        controlsContainer.addSubview(controlsStack)
+
+        if options.enableTextInput {
+            let composer = makeTextComposerView()
+            let compactControls = makeCompactControlButtonsStack()
+            let editingRow = UIStackView(arrangedSubviews: [composer, compactControls])
+            editingRow.translatesAutoresizingMaskIntoConstraints = false
+            editingRow.axis = .horizontal
+            editingRow.alignment = .center
+            editingRow.spacing = 8
+            composer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            composer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            compactControls.setContentHuggingPriority(.required, for: .horizontal)
+            compactControls.isHidden = true
+            controlsStack.addArrangedSubview(editingRow)
+            editingRow.widthAnchor.constraint(equalTo: controlsStack.widthAnchor).isActive = true
+        }
         controlsStack.addArrangedSubview(buttonsStack)
         controlsStack.addArrangedSubview(disclosureLabel)
-        controlsContainer.addSubview(controlsStack)
+
+        let controlsBottomConstraint: NSLayoutConstraint
+        if options.enableTextInput, #available(iOS 15.0, *) {
+            controlsBottomConstraint = controlsContainer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        } else {
+            controlsBottomConstraint = controlsContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+        }
 
         NSLayoutConstraint.activate([
             controlsContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             controlsContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            controlsContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            controlsBottomConstraint,
 
             controlsStack.topAnchor.constraint(equalTo: controlsContainer.topAnchor, constant: 16),
-            controlsStack.leadingAnchor.constraint(greaterThanOrEqualTo: controlsContainer.leadingAnchor, constant: 24),
-            controlsStack.trailingAnchor.constraint(lessThanOrEqualTo: controlsContainer.trailingAnchor, constant: -24),
-            controlsStack.centerXAnchor.constraint(equalTo: controlsContainer.centerXAnchor),
+            controlsStack.leadingAnchor.constraint(equalTo: controlsContainer.leadingAnchor, constant: 20),
+            controlsStack.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -20),
             controlsStack.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -controlsBottomPadding),
+            buttonsStack.widthAnchor.constraint(lessThanOrEqualTo: controlsStack.widthAnchor),
 
             disclosureLabel.leadingAnchor.constraint(equalTo: controlsContainer.leadingAnchor, constant: 24),
             disclosureLabel.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -24),
         ])
+        updateTextComposerEditingState(isEditing: false)
     }
 
-    private func configureControlButton(
-        _ button: UIButton,
-        image: UIImage?,
-        backgroundColor: UIColor,
-        iconColor: UIColor,
-        accessibilityLabel: String? = nil,
-        action: Selector
-    ) {
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(image?.withRenderingMode(.alwaysTemplate), for: .normal)
-        button.tintColor = iconColor
-        button.backgroundColor = backgroundColor
-        button.layer.cornerRadius = controlButtonSize / 2
-        button.clipsToBounds = true
-        if let accessibilityLabel {
-            button.accessibilityLabel = accessibilityLabel
+    private func makeTextComposerView() -> UIView {
+        let composer = options.textComposerView ?? VoiceTextComposerView(placeholder: options.textComposerPlaceholder)
+        composer.textField.delegate = self
+        composer.onSend = { [weak self] in
+            self?.sendComposerText()
         }
-        button.addTarget(self, action: action, for: .touchUpInside)
-        NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: controlButtonSize),
-            button.heightAnchor.constraint(equalToConstant: controlButtonSize),
-        ])
+        textComposerView = composer
+        return composer
+    }
+
+    private func updateTextComposerEditingState(isEditing: Bool) {
+        guard options.enableTextInput else { return }
+        compactButtonsStack?.isHidden = !isEditing
+        normalButtonsStack?.isHidden = isEditing
+        disclosureLabel.isHidden = isEditing || (options.disclosureText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        if isEditing && !isMuted {
+            compactMuteLevelDisplay?.setInputLevel(latestInputAudioLevel)
+            compactMuteLevelDisplay?.setOutputLevel(latestOutputAudioLevel)
+        } else {
+            compactMuteLevelDisplay?.resetLevels()
+        }
+    }
+
+    private func updateMuteControl(isMuted: Bool) {
+        muteButton?.isHidden = isMuted
+        unmuteButton?.isHidden = !isMuted
+        compactMuteButton?.isHidden = isMuted
+        compactUnmuteButton?.isHidden = !isMuted
+        if isMuted {
+            muteLevelDisplay?.resetLevels()
+            compactMuteLevelDisplay?.resetLevels()
+        } else {
+            muteLevelDisplay?.setInputLevel(latestInputAudioLevel)
+            muteLevelDisplay?.setOutputLevel(latestOutputAudioLevel)
+            if compactButtonsStack?.isHidden == false {
+                compactMuteLevelDisplay?.setInputLevel(latestInputAudioLevel)
+                compactMuteLevelDisplay?.setOutputLevel(latestOutputAudioLevel)
+            }
+        }
     }
 
     private func updateUI(for state: VoiceSessionManager.State) {
@@ -835,23 +1304,34 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         case .ended:
             setLoadingStateVisible(false)
             cancelInitialGreetingFallback()
+            latestInputAudioLevel = 0
+            latestOutputAudioLevel = 0
             stopWaveformAnimation()
+            muteLevelDisplay?.resetLevels()
+            compactMuteLevelDisplay?.resetLevels()
             setControlButtonsEnabled(false)
         }
     }
 
     private func setControlButtonsEnabled(_ enabled: Bool) {
         let alpha: CGFloat = enabled ? 1.0 : 0.5
-        for button in [muteButton, endButton] {
+        for button in [muteButton, unmuteButton, endButton, compactMuteButton, compactUnmuteButton, compactEndButton].compactMap({ $0 }) {
             button.isEnabled = enabled
             button.alpha = alpha
         }
+        textComposerView?.textField.isEnabled = enabled && options.enableTextInput
+        textComposerView?.sendButton.isEnabled = enabled && options.enableTextInput
+        textComposerView?.alpha = (textComposerView?.textField.isEnabled == true) ? 1.0 : 0.5
         navigationItem.rightBarButtonItem?.isEnabled = enabled
     }
 
     private func showErrorState(message: String) {
         DispatchQueue.main.async {
+            self.latestInputAudioLevel = 0
+            self.latestOutputAudioLevel = 0
             self.stopWaveformAnimation()
+            self.muteLevelDisplay?.resetLevels()
+            self.compactMuteLevelDisplay?.resetLevels()
             self.shutdownVoiceSessionIfNeeded()
             self.showErrorBanner(message: message)
 
@@ -865,7 +1345,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
                 self.placeholderContainer.isHidden = true
             }
 
-            self.loadingIndicator.stopAnimating()
+            self.setLoadingStateVisible(false)
             self.setControlButtonsEnabled(false)
         }
     }
@@ -1004,6 +1484,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         placeholderWaveformIcon.isHidden = visible
         placeholderLabel.isHidden = visible
         if visible {
+            stopWaveformAnimation()
             loadingIndicator.startAnimating()
         } else {
             loadingIndicator.stopAnimating()
@@ -1015,13 +1496,13 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         debugLog("AgentVoiceController: mute toggled -> \(isMuted ? "muted" : "unmuted")")
         if isMuted {
             voiceSession?.pauseListening()
-            let image = options.mutedIcon ?? UIImage(systemName: "mic.slash.fill")
-            muteButton.setImage(image?.withRenderingMode(.alwaysTemplate), for: .normal)
+            latestInputAudioLevel = 0
+            muteLevelDisplay?.setInputLevel(0)
+            compactMuteLevelDisplay?.setInputLevel(0)
         } else {
             voiceSession?.resumeListening()
-            let image = options.muteIcon ?? UIImage(systemName: "mic.fill")
-            muteButton.setImage(image?.withRenderingMode(.alwaysTemplate), for: .normal)
         }
+        updateMuteControl(isMuted: isMuted)
     }
 
     @objc private func endTapped() {
@@ -1035,6 +1516,31 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     @objc private func switchToChatTapped() {
         shutdownVoiceSessionIfNeeded(closeReason: .continueInChat)
         fireSwitchedToChatIfNeeded(agentInitiated: false)
+    }
+
+    public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        sendComposerText()
+        return false
+    }
+
+    public func textFieldDidBeginEditing(_ textField: UITextField) {
+        updateTextComposerEditingState(isEditing: true)
+    }
+
+    public func textFieldDidEndEditing(_ textField: UITextField) {
+        updateTextComposerEditingState(isEditing: false)
+    }
+
+    private func sendComposerText() {
+        guard options.enableTextInput else { return }
+        let text = (textComposerView?.textField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        guard voiceSession?.sendTextClient(text) == true else {
+            debugLog("AgentVoiceController: text_client send skipped; voice session is not connected")
+            return
+        }
+        textComposerView?.textField.text = ""
+        textComposerView?.updateSendButtonVisibility(animated: false)
     }
 }
 
@@ -1064,4 +1570,50 @@ public extension VoiceCallbacks {
     func didReceiveAgentAttachment(attachments: [AgentAttachment]) {}
     func onSessionInfoReceived(conversationID: String, encryptionKey: String) {}
     func onResumeTokenReceived(token: String) {}
+}
+
+private extension UIColor {
+    func matches(_ other: UIColor, using traitCollection: UITraitCollection) -> Bool {
+        guard
+            let lhs = rgbaComponents(using: traitCollection),
+            let rhs = other.rgbaComponents(using: traitCollection)
+        else {
+            return false
+        }
+        let tolerance: CGFloat = 0.001
+        return abs(lhs.red - rhs.red) < tolerance &&
+            abs(lhs.green - rhs.green) < tolerance &&
+            abs(lhs.blue - rhs.blue) < tolerance &&
+            abs(lhs.alpha - rhs.alpha) < tolerance
+    }
+
+    func contrastingBlackOrWhite(using traitCollection: UITraitCollection) -> UIColor {
+        guard let components = rgbaComponents(using: traitCollection) else {
+            return defaultMutePillIconColor
+        }
+        let luminance = relativeLuminance(red: components.red, green: components.green, blue: components.blue)
+        let whiteContrast = (1.0 + 0.05) / (luminance + 0.05)
+        let blackContrast = (luminance + 0.05) / 0.05
+        return whiteContrast > blackContrast ? .white : defaultMutePillIconColor
+    }
+
+    private func rgbaComponents(using traitCollection: UITraitCollection) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat)? {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard resolvedColor(with: traitCollection).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return nil
+        }
+        return (red, green, blue, alpha)
+    }
+
+    private func relativeLuminance(red: CGFloat, green: CGFloat, blue: CGFloat) -> CGFloat {
+        func linearized(_ component: CGFloat) -> CGFloat {
+            component <= 0.03928
+                ? component / 12.92
+                : CGFloat(pow(Double((component + 0.055) / 1.055), 2.4))
+        }
+        return 0.2126 * linearized(red) + 0.7152 * linearized(green) + 0.0722 * linearized(blue)
+    }
 }

@@ -19,6 +19,10 @@ final class AudioCaptureSession {
 
     var onAudioData: ((Data) -> Void)?
 
+    /// Emits the input RMS level from the audio tap thread, and zero from pause transitions.
+    /// Callers must dispatch to their target queue before touching thread-confined state.
+    var onInputLevel: ((Float) -> Void)?
+
     private let disableInterruptions: Bool
     private let sampleRate: Double
     private let inputTapDuration: Double
@@ -86,20 +90,17 @@ final class AudioCaptureSession {
                 self.lastTapSpeakingState = stateSnapshot.isSpeakingState
             }
 
+            let rms = AudioLevelMeter.computeRMS(buffer: buffer)
+
             if stateSnapshot.isSpeakingState && !self.disableInterruptions {
-                guard let samples = buffer.floatChannelData?[0] else { return }
-                let count = Int(buffer.frameLength)
-                var sumOfSquares: Float = 0
-                for i in 0..<count {
-                    sumOfSquares += samples[i] * samples[i]
-                }
-                let rms = sqrtf(sumOfSquares / Float(count))
                 if !self.shouldPassSpeakingGate(rms: rms) {
+                    self.onInputLevel?(0)
                     return
                 }
             } else {
                 self.resetEchoGateState()
             }
+            self.onInputLevel?(rms)
 
             let frameCount = AVAudioFrameCount(
                 Double(buffer.frameLength) * self.sampleRate / inputFormat.sampleRate
@@ -139,7 +140,7 @@ final class AudioCaptureSession {
     }
 
     func pauseListening() {
-        listeningPauseQueue.sync(flags: .barrier) {
+        updatePauseState {
             _isListeningPaused = true
             debugLog("SVP listening paused (user mute/pause). speakingMuted=\(_isSpeakingMuted)")
         }
@@ -159,7 +160,7 @@ final class AudioCaptureSession {
     }
 
     func setSpeakingMuted(_ muted: Bool, stateDescription: String) {
-        listeningPauseQueue.sync(flags: .barrier) {
+        updatePauseState {
             guard _isSpeakingMuted != muted else { return }
             _isSpeakingMuted = muted
             debugLog("SVP speaking-mute \(muted ? "enabled" : "disabled") for state=\(stateDescription)")
@@ -180,6 +181,19 @@ final class AudioCaptureSession {
                 isListeningPaused: _isListeningPaused || _isSpeakingMuted,
                 isSpeakingState: _isSpeakingState
             )
+        }
+    }
+
+    private func updatePauseState(_ update: () -> Void) {
+        var wasPaused = false
+        var isPaused = false
+        listeningPauseQueue.sync(flags: .barrier) {
+            wasPaused = _isListeningPaused || _isSpeakingMuted
+            update()
+            isPaused = _isListeningPaused || _isSpeakingMuted
+        }
+        if !wasPaused, isPaused {
+            onInputLevel?(0)
         }
     }
 

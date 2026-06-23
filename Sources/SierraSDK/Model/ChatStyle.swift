@@ -35,14 +35,29 @@ public struct ChatStyleTypography {
     /// The font size, in pixels.
     public let fontSize: Int?
 
+    /// The font weight, or boldness.
+    public let fontWeight: Int?
+
+    /// The line height, as a unitless multiplier of the font size.
+    public let lineHeight: Double?
+
+    /// The horizontal spacing between text characters, in em units.
+    public let letterSpacing: Double?
+
     /// Custom fonts that are included in the app bundle.
     public let customFonts: [CustomFont]?
 
     public init(fontFamily: String? = nil,
                 fontSize: Int? = nil,
+                fontWeight: Int? = nil,
+                lineHeight: Double? = nil,
+                letterSpacing: Double? = nil,
                 customFonts: [CustomFont]? = nil) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
+        self.fontWeight = fontWeight
+        self.lineHeight = lineHeight
+        self.letterSpacing = letterSpacing
         self.customFonts = customFonts
     }
 }
@@ -273,7 +288,7 @@ extension UIColor {
 
 extension ChatStyleColors {
     // Match the web embed's ChatStyle.colors shape.
-    func toJSON() -> [String: String?] {
+    package func toJSON() -> [String: String?] {
         var json = [
             "background": backgroundColor.toHex(),
             "titleBar": titleBar.toHex(),
@@ -300,7 +315,7 @@ extension ChatStyleColors {
 }
 
 extension ChatStyleTypography {
-    func toJSON() -> [String: Any?] {
+    package func toJSON() -> [String: Any?] {
         var json: [String: Any?] = [:]
         if let fontFamily = fontFamily {
             json["fontFamily"] = fontFamily
@@ -312,12 +327,21 @@ extension ChatStyleTypography {
             json["fontSize750"] = fontSize
             json["fontSize500"] = fontSize
         }
+        if let fontWeight = fontWeight {
+            json["fontWeight"] = fontWeight
+        }
+        if let lineHeight = lineHeight {
+            json["lineHeight"] = lineHeight
+        }
+        if let letterSpacing = letterSpacing {
+            json["letterSpacing"] = letterSpacing
+        }
         return json
     }
 }
 
 extension ChatStyle {
-    func toJSON() -> [String: Any] {
+    package func toJSON() -> [String: Any] {
         var json: [String: Any] = [
             "colors": colors.toJSON(),
         ]
@@ -328,7 +352,7 @@ extension ChatStyle {
         return json
     }
 
-    func toJSONString() -> String {
+    package func toJSONString() -> String {
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: toJSON(), options: [])
             if let jsonString = String(data: jsonData, encoding: .utf8) {

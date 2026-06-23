@@ -139,6 +139,20 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertFalse(options.toQueryItems(conversationState: nil).contains { $0.name == "state" })
         XCTAssertFalse(options.toQueryItems(conversationState: "").contains { $0.name == "state" })
     }
+
+    func testVariablesAndSecretsAreNotAddedToQueryItems() {
+        var conversationOptions = ConversationOptions()
+        conversationOptions.variables = ["userId": "12345"]
+        conversationOptions.secrets = ["authToken": "abc123"]
+        var options = AgentChatControllerOptions(name: "Test")
+        options.conversationOptions = conversationOptions
+
+        // Variables and secrets are delivered via the window.__sierraInitialMemory bridge global,
+        // never as URL query parameters, so they cannot leak into logs.
+        let queryItems = options.toQueryItems()
+        XCTAssertFalse(queryItems.contains { $0.name == "variable" })
+        XCTAssertFalse(queryItems.contains { $0.name == "secret" })
+    }
 }
 
 private final class CapturingVoiceCoordinatorDelegate: AgentVoiceChatCoordinatorDelegate {

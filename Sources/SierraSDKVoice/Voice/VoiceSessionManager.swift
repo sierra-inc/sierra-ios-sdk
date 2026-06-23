@@ -4,6 +4,40 @@ import AVFoundation
 import Foundation
 import SierraSDK
 
+/// Ordered transcript event projected by SVP conversation events.
+public struct AgentVoiceConversationEvent {
+    public let messageId: String
+    public let eventType: String
+    public let role: String
+    public let text: String
+    public let attachments: [[String: Any]]
+
+    public init(messageId: String, eventType: String, role: String, text: String = "", attachments: [[String: Any]] = []) {
+        self.messageId = messageId
+        self.eventType = eventType
+        self.role = role
+        self.text = text
+        self.attachments = attachments
+    }
+
+    fileprivate init?(raw: [String: Any]) {
+        guard
+            let messageId = raw["messageId"] as? String,
+            let eventType = raw["eventType"] as? String,
+            let role = raw["role"] as? String
+        else {
+            return nil
+        }
+        self.init(
+            messageId: messageId,
+            eventType: eventType,
+            role: role,
+            text: raw["text"] as? String ?? "",
+            attachments: raw["attachments"] as? [[String: Any]] ?? []
+        )
+    }
+}
+
 /// Defines callbacks emitted by `VoiceSessionManager` during a voice session lifecycle.
 ///
 /// Implementers are notified about:
@@ -14,6 +48,7 @@ import SierraSDK
 public protocol VoiceSessionDelegate: AnyObject {
     func voiceSession(_ session: VoiceSessionManager, didReceiveCredentials conversationID: String, encryptionKey: String)
     func voiceSession(_ session: VoiceSessionManager, didReceiveAttachments attachments: [[String: Any]])
+    func voiceSession(_ session: VoiceSessionManager, didReceiveConversationEvent event: AgentVoiceConversationEvent)
     func voiceSessionDidReceiveInitialAudio(_ session: VoiceSessionManager)
     func voiceSessionDidStartInitialAudioPlayback(_ session: VoiceSessionManager)
     func voiceSession(_ session: VoiceSessionManager, didChangeState state: VoiceSessionManager.State)
@@ -21,13 +56,18 @@ public protocol VoiceSessionDelegate: AnyObject {
     func voiceSessionDidEnd(_ session: VoiceSessionManager)
     func voiceSessionDidRequestContinueInChat(_ session: VoiceSessionManager)
     func voiceSession(_ session: VoiceSessionManager, didReceiveResumeToken token: String)
+    func voiceSession(_ session: VoiceSessionManager, didUpdateInputAudioLevel level: Float)
+    func voiceSession(_ session: VoiceSessionManager, didUpdateOutputAudioLevel level: Float)
 }
 
 public extension VoiceSessionDelegate {
+    func voiceSession(_ session: VoiceSessionManager, didReceiveConversationEvent event: AgentVoiceConversationEvent) {}
     func voiceSessionDidReceiveInitialAudio(_ session: VoiceSessionManager) {}
     func voiceSessionDidStartInitialAudioPlayback(_ session: VoiceSessionManager) {}
     func voiceSessionDidRequestContinueInChat(_ session: VoiceSessionManager) {}
     func voiceSession(_ session: VoiceSessionManager, didReceiveResumeToken token: String) {}
+    func voiceSession(_ session: VoiceSessionManager, didUpdateInputAudioLevel level: Float) {}
+    func voiceSession(_ session: VoiceSessionManager, didUpdateOutputAudioLevel level: Float) {}
 }
 
 /// Canonical SVP close reasons understood by the Sierra Voice Protocol server.
@@ -94,6 +134,7 @@ public class VoiceSessionManager: NSObject {
     private let agentParameters: [String: String]
     private let enableText: Bool
     private let forwardAgentAttachments: Bool
+    private let enableConversationEvents: Bool
     private var resumeToken: String?
     private weak var delegate: VoiceSessionDelegate?
 
@@ -114,7 +155,7 @@ public class VoiceSessionManager: NSObject {
 
     private let audioFormat = "linear16"
     private let sampleRate: Double = 24000
-    private let compatibilityDate = "2026-04-29"
+    private let compatibilityDate = "2026-05-07"
     private let preferredIOBufferDuration: Double = 0.02
     private let inputTapDuration: Double = 0.02
 
@@ -135,6 +176,7 @@ public class VoiceSessionManager: NSObject {
         agentParameters: [String: String] = [:],
         enableText: Bool = true,
         forwardAgentAttachments: Bool = true,
+        enableConversationEvents: Bool = false,
         delegate: VoiceSessionDelegate
     ) {
         self.config = config
@@ -147,6 +189,7 @@ public class VoiceSessionManager: NSObject {
         self.agentParameters = agentParameters
         self.enableText = enableText
         self.forwardAgentAttachments = forwardAgentAttachments
+        self.enableConversationEvents = enableConversationEvents
         self.delegate = delegate
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: ())
@@ -197,13 +240,15 @@ public class VoiceSessionManager: NSObject {
         setState(.ended)
     }
 
-    public func sendTextClient(_ text: String) {
-        transport?.send(type: "text_client", subMsg: ["text": text])
+    @discardableResult
+    public func sendTextClient(_ text: String) -> Bool {
+        transport?.send(type: "text_client", subMsg: ["text": text]) ?? false
     }
 
-    public func sendAttachmentsClient(_ attachments: [[String: Any]]) {
+    @discardableResult
+    public func sendAttachmentsClient(_ attachments: [[String: Any]]) -> Bool {
         debugLog("SVP send: attachments_client")
-        transport?.send(type: "attachments_client", subMsg: ["attachments": attachments])
+        return transport?.send(type: "attachments_client", subMsg: ["attachments": attachments]) ?? false
     }
 
     /// Pushes fresh values into conversation memory mid-call via the SVP
@@ -269,33 +314,40 @@ public class VoiceSessionManager: NSObject {
         capture.onAudioData = { [weak self] data in
             self?.sendAudioClient(data)
         }
+        capture.onInputLevel = { [weak self] level in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.delegate?.voiceSession(self, didUpdateInputAudioLevel: level)
+            }
+        }
         capture.start(inputNode: inputNode, inputFormat: inputFormat)
+        installPlayerLevelTap(player: player, format: outputFormat)
         capture.setSpeakingState(currentState() == .speaking)
         if disableInterruptions {
             let state = currentState()
             capture.setSpeakingMuted(state == .speaking, stateDescription: describeState(state))
         }
         audioCaptureSession = capture
+        if sessionSync({ isUserListeningPaused }) {
+            capture.pauseListening()
+        }
 
         let playback = AudioPlaybackQueue(sampleRate: sampleRate)
         playback.onDidStartSpeaking = { [weak self] in
             guard let self else { return }
             let shouldDeliverInitialAudioPlayback = self.markInitialAudioPlaybackDeliveredIfNeeded()
-            DispatchQueue.main.async {
-                if shouldDeliverInitialAudioPlayback {
-                    self.delegate?.voiceSessionDidStartInitialAudioPlayback(self)
-                }
-                if self.currentState() == .listening {
-                    self.setState(.speaking)
-                }
+            if shouldDeliverInitialAudioPlayback {
+                self.delegate?.voiceSessionDidStartInitialAudioPlayback(self)
+            }
+            if self.currentState() == .listening {
+                self.setState(.speaking)
             }
         }
         playback.onDidStopSpeaking = { [weak self] in
             guard let self else { return }
-            DispatchQueue.main.async {
-                if self.currentState() == .speaking {
-                    self.setState(.listening)
-                }
+            self.delegate?.voiceSession(self, didUpdateOutputAudioLevel: 0)
+            if self.currentState() == .speaking {
+                self.setState(.listening)
             }
         }
         playback.onPlaybackMark = { [weak self] mark in
@@ -304,16 +356,18 @@ public class VoiceSessionManager: NSObject {
         playback.configure(playerNode: player)
         audioPlaybackQueue = playback
 
+        self.audioEngine = engine
+        self.playerNode = player
+
         do {
             try engine.start()
             player.play()
         } catch {
+            stopAudio()
             delegate?.voiceSession(self, didEncounterError: error)
             return false
         }
 
-        self.audioEngine = engine
-        self.playerNode = player
         debugLog("SVP: Audio setup complete")
         return true
     }
@@ -323,11 +377,28 @@ public class VoiceSessionManager: NSObject {
         audioCaptureSession = nil
         audioPlaybackQueue?.stop()
         audioPlaybackQueue = nil
+        playerNode?.removeTap(onBus: 0)
         playerNode?.stop()
         audioEngine?.stop()
         audioEngine = nil
         playerNode = nil
         try? AVAudioSession.sharedInstance().setActive(false)
+    }
+
+    private func installPlayerLevelTap(player: AVAudioPlayerNode, format: AVAudioFormat) {
+        let bufferSize: AVAudioFrameCount = 1024
+        var lastDispatchedLevel: Float = 0
+        player.installTap(onBus: 0, bufferSize: bufferSize, format: format) { [weak self] buffer, _ in
+            guard let self else { return }
+            let level = AudioLevelMeter.computeRMS(buffer: buffer)
+            if level == 0, lastDispatchedLevel == 0 { return }
+            lastDispatchedLevel = level
+            DispatchQueue.main.async {
+                let state = self.currentState()
+                guard state == .speaking || (state == .listening && level > 0) else { return }
+                self.delegate?.voiceSession(self, didUpdateOutputAudioLevel: level)
+            }
+        }
     }
 
     @discardableResult
@@ -365,6 +436,7 @@ public class VoiceSessionManager: NSObject {
             "enableText": enableText,
             "forwardAgentAttachments": forwardAgentAttachments,
             "enableSessionInfo": true,
+            "enableConversationEvents": enableConversationEvents,
         ]
         if resumeConversation {
             subMsg["resumeConversation"] = true
@@ -427,6 +499,13 @@ public class VoiceSessionManager: NSObject {
                 delegate?.voiceSession(self, didReceiveAttachments: attachments)
             } else {
                 debugLog("SVP attachments_server received but could not parse subMsg.attachments")
+            }
+        case "conversation_event_server":
+            guard enableConversationEvents else { return }
+            if let event = AgentVoiceConversationEvent(raw: subMsg) {
+                delegate?.voiceSession(self, didReceiveConversationEvent: event)
+            } else {
+                debugLog("SVP conversation_event_server received but could not parse subMsg")
             }
         case "clear":
             audioPlaybackQueue?.clear()

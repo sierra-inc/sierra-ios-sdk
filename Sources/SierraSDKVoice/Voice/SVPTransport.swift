@@ -92,7 +92,8 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         }
     }
 
-    func send(type: String, subMsg: [String: Any]) {
+    @discardableResult
+    func send(type: String, subMsg: [String: Any]) -> Bool {
         sendJSON([
             "type": type,
             "msgNum": nextMsgNum(),
@@ -161,23 +162,29 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         }
     }
 
-    private func sendJSON(_ dict: [String: Any]) {
+    @discardableResult
+    private func sendJSON(_ dict: [String: Any]) -> Bool {
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
               let str = String(data: data, encoding: .utf8) else {
             debugLog("SVP: Failed to serialize message")
-            return
+            return false
         }
         let type = dict["type"] as? String ?? "unknown"
         if type == "attachments_client" {
             debugLog("SVP send: \(type)")
         }
-        webSocketTask?.send(.string(str)) { [weak self] error in
+        guard let webSocketTask else {
+            debugLog("SVP: Cannot send \(type), websocket is not connected")
+            return false
+        }
+        webSocketTask.send(.string(str)) { [weak self] error in
             if let error {
                 debugLog("SVP send error: \(error)")
                 guard let self else { return }
                 self.delegate?.svpTransport(self, didEncounterError: error)
             }
         }
+        return true
     }
 
     private func receiveMessages() {
