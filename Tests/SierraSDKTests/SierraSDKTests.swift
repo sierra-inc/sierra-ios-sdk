@@ -140,6 +140,23 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertFalse(options.toQueryItems(conversationState: "").contains { $0.name == "state" })
     }
 
+    func testUpdateVariablesAndSecretsOnSessionResumeForwardedAsQueryItem() {
+        var options = AgentChatControllerOptions(name: "Test")
+        options.updateVariablesAndSecretsOnSessionResume = true
+        let queryItems = options.toQueryItems()
+        let items = queryItems.filter { $0.name == "updateVariablesAndSecretsOnSessionResume" }
+
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.first?.value, "true")
+    }
+
+    func testUpdateVariablesAndSecretsOnSessionResumeOmittedByDefault() {
+        let options = AgentChatControllerOptions(name: "Test")
+        XCTAssertFalse(
+            options.toQueryItems().contains { $0.name == "updateVariablesAndSecretsOnSessionResume" }
+        )
+    }
+
     func testVariablesAndSecretsAreNotAddedToQueryItems() {
         var conversationOptions = ConversationOptions()
         conversationOptions.variables = ["userId": "12345"]

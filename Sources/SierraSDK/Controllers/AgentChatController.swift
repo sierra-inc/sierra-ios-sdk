@@ -223,6 +223,13 @@ public struct AgentChatControllerOptions {
     /// Only takes effect when enableConversationList is true.
     public var showConversationListByDefault: Bool = false
 
+    /// When true, the variables and secrets supplied via `conversationOptions` are re-sent when an
+    /// existing conversation is resumed (e.g. when the controller is recreated with new values), so
+    /// the resumed conversation picks them up. Values are merged per key (later values win); keys
+    /// not supplied are left unchanged. When false (the default), variables and secrets are only
+    /// applied when the conversation is first created.
+    public var updateVariablesAndSecretsOnSessionResume: Bool = false
+
     /// Customization of the Conversation that the controller will create.
     public var conversationOptions: ConversationOptions?
 
@@ -451,6 +458,12 @@ extension AgentChatControllerOptions {
 
         if showConversationListByDefault {
             queryItems.append(URLQueryItem(name: "showConversationListByDefault", value: "true"))
+        }
+
+        if updateVariablesAndSecretsOnSessionResume {
+            queryItems.append(
+                URLQueryItem(name: "updateVariablesAndSecretsOnSessionResume", value: "true")
+            )
         }
 
         return queryItems
