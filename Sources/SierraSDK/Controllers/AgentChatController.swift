@@ -457,8 +457,34 @@ extension AgentChatControllerOptions {
     }
 }
 
+/// Forwards script messages to a `weak` delegate so that `WKUserContentController` does not
+/// strongly retain the message handler. Registering a `UIViewController` directly as the handler
+/// creates a controller -> webView -> userContentController -> controller retain cycle that
+/// prevents deallocation; this proxy breaks that cycle.
+private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
+    weak var delegate: (WKScriptMessageHandler & WKScriptMessageHandlerWithReply)?
+
+    init(delegate: WKScriptMessageHandler & WKScriptMessageHandlerWithReply) {
+        self.delegate = delegate
+        super.init()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        delegate?.userContentController(userContentController, didReceive: message)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        guard let delegate else {
+            replyHandler(nil, nil)
+            return
+        }
+        delegate.userContentController(userContentController, didReceive: message, replyHandler: replyHandler)
+    }
+}
+
 public class AgentChatController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
     private var webView: CustomWebView!
+    private var scriptMessageHandler: WeakScriptMessageHandler?
     private var webViewLoaded = false
     private let agent: Agent
     private var options: AgentChatControllerOptions
@@ -566,9 +592,13 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         let configuration = WKWebViewConfiguration()
         let contentController = configuration.userContentController
 
-        // Add the script message handler
-        contentController.add(self, name: "chatHandler")
-        contentController.addScriptMessageHandler(self, contentWorld: .page, name: "chatReplyHandler")
+        // Add the script message handler via a weak-forwarding proxy so the content controller does
+        // not strongly retain this controller (which would create a retain cycle and leak the
+        // controller and its WKWebView).
+        let messageHandler = WeakScriptMessageHandler(delegate: self)
+        scriptMessageHandler = messageHandler
+        contentController.add(messageHandler, name: "chatHandler")
+        contentController.addScriptMessageHandler(messageHandler, contentWorld: .page, name: "chatReplyHandler")
 
         // Pre-populate storage before the web content loads. This allows the web embed to read
         // stored conversation state synchronously during init.

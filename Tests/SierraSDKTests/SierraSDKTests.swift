@@ -153,6 +153,18 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertFalse(queryItems.contains { $0.name == "variable" })
         XCTAssertFalse(queryItems.contains { $0.name == "secret" })
     }
+
+    @MainActor
+    func testAgentChatControllerDeallocatesAfterRelease() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        weak var weakController: AgentChatController?
+        autoreleasepool {
+            let controller = AgentChatController(agent: agent, options: AgentChatControllerOptions(name: "Test"))
+            weakController = controller
+            XCTAssertNotNil(weakController)
+        }
+        XCTAssertNil(weakController, "AgentChatController must deallocate; a WKScriptMessageHandler retain cycle is leaking it")
+    }
 }
 
 private final class CapturingVoiceCoordinatorDelegate: AgentVoiceChatCoordinatorDelegate {
