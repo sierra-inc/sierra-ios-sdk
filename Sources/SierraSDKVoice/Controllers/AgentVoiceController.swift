@@ -134,6 +134,15 @@ public struct AgentVoiceStyle {
     ) {
         let fontSize = Self.cssPixelValue(messageFontSize).map { max(1, Int($0.rounded())) }
         let fontSizeDouble = Self.cssPixelValue(messageFontSize)
+        let messageBubble = ChatTextStyle(
+            fontWeight: messageFontWeight,
+            lineHeight: Self.cssPixelValue(messageLineHeight).flatMap { lineHeight in
+                fontSizeDouble.map { lineHeight / $0 }
+            },
+            letterSpacing: Self.cssPixelValue(messageLetterSpacing).flatMap { letterSpacing in
+                fontSizeDouble.map { letterSpacing / $0 }
+            }
+        )
         self.init(
             backgroundColor: backgroundColor,
             titleBarColor: titleBarColor,
@@ -155,13 +164,8 @@ public struct AgentVoiceStyle {
             messageTypography: ChatStyleTypography(
                 fontFamily: messageFontFamily,
                 fontSize: fontSize,
-                fontWeight: messageFontWeight,
-                lineHeight: Self.cssPixelValue(messageLineHeight).flatMap { lineHeight in
-                    fontSizeDouble.map { lineHeight / $0 }
-                },
-                letterSpacing: Self.cssPixelValue(messageLetterSpacing).flatMap { letterSpacing in
-                    fontSizeDouble.map { letterSpacing / $0 }
-                }
+                userBubble: messageBubble,
+                assistantBubble: messageBubble
             )
         )
     }
@@ -205,14 +209,14 @@ extension AgentVoiceStyle {
     @available(*, deprecated, message: "Use messageTypography instead.")
     public var messageFontFamily: String {
         get { messageTypography.fontFamily ?? "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif" }
-        set { messageTypography = messageTypography.with(fontFamily: newValue) }
+        set { messageTypography = messageTypography.withGlobal(fontFamily: newValue) }
     }
 
     /// Transcript bubble font weight in the mobile renderer.
     @available(*, deprecated, message: "Use messageTypography instead.")
     public var messageFontWeight: Int {
-        get { messageTypography.fontWeight ?? 510 }
-        set { messageTypography = messageTypography.with(fontWeight: newValue) }
+        get { messageTypography.userBubble?.fontWeight ?? 510 }
+        set { messageTypography = messageTypography.withMessageBubble(fontWeight: newValue) }
     }
 
     /// Transcript bubble font size in CSS pixels.
@@ -220,7 +224,7 @@ extension AgentVoiceStyle {
     public var messageFontSize: String {
         get { "\(messageTypography.fontSize ?? 14)px" }
         set {
-            messageTypography = messageTypography.with(
+            messageTypography = messageTypography.withGlobal(
                 fontSize: Self.cssPixelValue(newValue).map { max(1, Int($0.rounded())) }
             )
         }
@@ -230,12 +234,12 @@ extension AgentVoiceStyle {
     @available(*, deprecated, message: "Use messageTypography instead.")
     public var messageLineHeight: String {
         get {
-            guard let lineHeight = messageTypography.lineHeight else { return "20px" }
+            guard let lineHeight = messageTypography.userBubble?.lineHeight else { return "20px" }
             return "\(lineHeight * Double(messageTypography.fontSize ?? 14))px"
         }
         set {
             let fontSize = Double(messageTypography.fontSize ?? 14)
-            messageTypography = messageTypography.with(
+            messageTypography = messageTypography.withMessageBubble(
                 lineHeight: Self.cssPixelValue(newValue).map { $0 / fontSize }
             )
         }
@@ -245,12 +249,12 @@ extension AgentVoiceStyle {
     @available(*, deprecated, message: "Use messageTypography instead.")
     public var messageLetterSpacing: String {
         get {
-            guard let letterSpacing = messageTypography.letterSpacing else { return "-0.32px" }
+            guard let letterSpacing = messageTypography.userBubble?.letterSpacing else { return "-0.32px" }
             return "\(letterSpacing * Double(messageTypography.fontSize ?? 14))px"
         }
         set {
             let fontSize = Double(messageTypography.fontSize ?? 14)
-            messageTypography = messageTypography.with(
+            messageTypography = messageTypography.withMessageBubble(
                 letterSpacing: Self.cssPixelValue(newValue).map { $0 / fontSize }
             )
         }
@@ -277,7 +281,13 @@ private extension ChatStyleColors {
             userBubble: userBubble ?? self.userBubble,
             userBubbleText: userBubbleText ?? self.userBubbleText,
             newChatButton: newChatButton,
+            newChatButtonText: newChatButtonText,
+            inputPlaceholder: inputPlaceholder,
             uploadButtonIcon: uploadButtonIcon,
+            disclosure: disclosure,
+            disclosureLink: disclosureLink,
+            userBubbleLink: userBubbleLink,
+            assistantBubbleLink: assistantBubbleLink,
             disclosureText: disclosureText,
             errorText: errorText,
             humanAgentTransferWaitingText: statusText,
@@ -289,19 +299,45 @@ private extension ChatStyleColors {
 }
 
 private extension ChatStyleTypography {
-    func with(
-        fontFamily: String? = nil,
-        fontSize: Int? = nil,
+    /// Returns a copy with the global `fontFamily`/`fontSize` replaced, preserving
+    /// the per-region typography overrides.
+    func withGlobal(fontFamily: String? = nil, fontSize: Int? = nil) -> ChatStyleTypography {
+        ChatStyleTypography(
+            fontFamily: fontFamily ?? self.fontFamily,
+            fontSize: fontSize ?? self.fontSize,
+            userBubble: userBubble,
+            assistantBubble: assistantBubble,
+            titleBar: titleBar,
+            disclosure: disclosure,
+            customFonts: customFonts
+        )
+    }
+
+    /// Returns a copy with the message-bubble typography updated. Voice styles
+    /// user and assistant transcript bubbles identically, so the same
+    /// `ChatTextStyle` is mirrored into both regions.
+    func withMessageBubble(
         fontWeight: Int? = nil,
         lineHeight: Double? = nil,
         letterSpacing: Double? = nil
     ) -> ChatStyleTypography {
-        ChatStyleTypography(
-            fontFamily: fontFamily ?? self.fontFamily,
-            fontSize: fontSize ?? self.fontSize,
-            fontWeight: fontWeight ?? self.fontWeight,
-            lineHeight: lineHeight ?? self.lineHeight,
-            letterSpacing: letterSpacing ?? self.letterSpacing,
+        let base = userBubble ?? ChatTextStyle()
+        let updated = ChatTextStyle(
+            fontSize: base.fontSize,
+            fontWeight: fontWeight ?? base.fontWeight,
+            lineHeight: lineHeight ?? base.lineHeight,
+            letterSpacing: letterSpacing ?? base.letterSpacing,
+            fontFamily: base.fontFamily,
+            fontStyle: base.fontStyle,
+            link: base.link
+        )
+        return ChatStyleTypography(
+            fontFamily: fontFamily,
+            fontSize: fontSize,
+            userBubble: updated,
+            assistantBubble: updated,
+            titleBar: titleBar,
+            disclosure: disclosure,
             customFonts: customFonts
         )
     }

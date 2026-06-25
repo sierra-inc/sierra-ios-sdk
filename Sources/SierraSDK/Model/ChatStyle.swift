@@ -25,13 +25,44 @@ public struct ChatStyle {
 
 public let DEFAULT_CHAT_STYLE = ChatStyle(colors: DEFAULT_CHAT_STYLE_COLORS, layout: DEFAULT_CHAT_STYLE_LAYOUT)
 
-/// Typography settings for chat UI. When useConfiguredStyle is true in AgentChatControllerOptions,
-/// these settings are overridden by server-configured typography.
-public struct ChatStyleTypography {
-    /// The font family, a comma-separated list of font names.
-    /// Note: Data for custom fonts must be provided in the `customFonts` property.
-    public let fontFamily: String?
+/// Styling overrides for hyperlinks within a region's text (e.g. links in the
+/// disclosure or in chat bubbles).
+public struct ChatLinkStyle {
+    /// The font weight (or boldness) of hyperlinks.
+    public let fontWeight: Int?
 
+    /// The font style of hyperlinks: "normal" or "italic".
+    public let fontStyle: String?
+
+    /// Underline behavior for hyperlinks: "always", "hover", or "none". "hover"
+    /// (the default) underlines on hover only; on touch devices this effectively
+    /// means no underline at rest.
+    public let underline: String?
+
+    public init(fontWeight: Int? = nil, fontStyle: String? = nil, underline: String? = nil) {
+        self.fontWeight = fontWeight
+        self.fontStyle = fontStyle
+        self.underline = underline
+    }
+
+    package func toJSON() -> [String: Any] {
+        var json: [String: Any] = [:]
+        if let fontWeight = fontWeight {
+            json["fontWeight"] = fontWeight
+        }
+        if let fontStyle = fontStyle {
+            json["fontStyle"] = fontStyle
+        }
+        if let underline = underline {
+            json["underline"] = underline
+        }
+        return json
+    }
+}
+
+/// Typography overrides for a specific region of the chat UI (e.g. user bubbles,
+/// agent bubbles, the title bar, or the disclosure text).
+public struct ChatTextStyle {
     /// The font size, in pixels.
     public let fontSize: Int?
 
@@ -44,6 +75,93 @@ public struct ChatStyleTypography {
     /// The horizontal spacing between text characters, in em units.
     public let letterSpacing: Double?
 
+    /// The font family, a comma-separated list of font names. Overrides the
+    /// global `fontFamily` for this region.
+    public let fontFamily: String?
+
+    /// The font style: "normal" or "italic".
+    public let fontStyle: String?
+
+    /// Styling overrides for hyperlinks within this region's text.
+    public let link: ChatLinkStyle?
+
+    public init(fontSize: Int? = nil,
+                fontWeight: Int? = nil,
+                lineHeight: Double? = nil,
+                letterSpacing: Double? = nil,
+                fontFamily: String? = nil,
+                fontStyle: String? = nil,
+                link: ChatLinkStyle? = nil) {
+        self.fontSize = fontSize
+        self.fontWeight = fontWeight
+        self.lineHeight = lineHeight
+        self.letterSpacing = letterSpacing
+        self.fontFamily = fontFamily
+        self.fontStyle = fontStyle
+        self.link = link
+    }
+
+    package func toJSON() -> [String: Any] {
+        var json: [String: Any] = [:]
+        if let fontSize = fontSize {
+            json["fontSize"] = fontSize
+        }
+        if let fontWeight = fontWeight {
+            json["fontWeight"] = fontWeight
+        }
+        if let lineHeight = lineHeight {
+            json["lineHeight"] = lineHeight
+        }
+        if let letterSpacing = letterSpacing {
+            json["letterSpacing"] = letterSpacing
+        }
+        if let fontFamily = fontFamily {
+            json["fontFamily"] = fontFamily
+        }
+        if let fontStyle = fontStyle {
+            json["fontStyle"] = fontStyle
+        }
+        if let link = link {
+            json["link"] = link.toJSON()
+        }
+        return json
+    }
+}
+
+/// Typography settings for chat UI. When useConfiguredStyle is true in AgentChatControllerOptions,
+/// these settings are overridden by server-configured typography.
+public struct ChatStyleTypography {
+    /// The font family, a comma-separated list of font names.
+    /// Note: Data for custom fonts must be provided in the `customFonts` property.
+    public let fontFamily: String?
+
+    /// The font size, in pixels.
+    public let fontSize: Int?
+
+    /// The font weight, or boldness.
+    @available(*, deprecated, message: "Has no effect. Use per-region typography (userBubble/assistantBubble/titleBar/disclosure) instead.")
+    public let fontWeight: Int?
+
+    /// The line height, as a unitless multiplier of the font size.
+    @available(*, deprecated, message: "Has no effect. Use per-region typography (userBubble/assistantBubble/titleBar/disclosure) instead.")
+    public let lineHeight: Double?
+
+    /// The horizontal spacing between text characters, in em units.
+    @available(*, deprecated, message: "Has no effect. Use per-region typography (userBubble/assistantBubble/titleBar/disclosure) instead.")
+    public let letterSpacing: Double?
+
+    /// Typography overrides for chat bubbles from the user.
+    public let userBubble: ChatTextStyle?
+
+    /// Typography overrides for chat bubbles from the AI assistant.
+    public let assistantBubble: ChatTextStyle?
+
+    /// Typography overrides for the title bar text.
+    public let titleBar: ChatTextStyle?
+
+    /// Typography overrides for the disclosure (disclaimer) text.
+    public let disclosure: ChatTextStyle?
+
     /// Custom fonts that are included in the app bundle.
     public let customFonts: [CustomFont]?
 
@@ -52,12 +170,20 @@ public struct ChatStyleTypography {
                 fontWeight: Int? = nil,
                 lineHeight: Double? = nil,
                 letterSpacing: Double? = nil,
+                userBubble: ChatTextStyle? = nil,
+                assistantBubble: ChatTextStyle? = nil,
+                titleBar: ChatTextStyle? = nil,
+                disclosure: ChatTextStyle? = nil,
                 customFonts: [CustomFont]? = nil) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.fontWeight = fontWeight
         self.lineHeight = lineHeight
         self.letterSpacing = letterSpacing
+        self.userBubble = userBubble
+        self.assistantBubble = assistantBubble
+        self.titleBar = titleBar
+        self.disclosure = disclosure
         self.customFonts = customFonts
     }
 }
@@ -139,13 +265,38 @@ public struct ChatStyleColors {
     /// The color of the text in chat bubbles for messages from the user.
     public let userBubbleText: UIColor
 
-    /// The color of the "Start new chat" button text.
+    /// The color of the new-chat button. When the button appears as a flat button in the chat
+    /// footer, this controls the text color. When the button appears as a filled button in the
+    /// conversation list, this controls the background color; in that case `newChatButtonText`
+    /// controls the text color. When nil, falls back to `userBubble`.
     public let newChatButton: UIColor?
+
+    /// The text color of the new-chat button in the conversation list. When nil, falls back to
+    /// `userBubbleText`.
+    public let newChatButtonText: UIColor?
+
+    /// The color of the placeholder text shown in the message input, also used for the send
+    /// button arrow when the input is empty. When nil, falls back to `text` at reduced opacity;
+    /// when set, it is used at full opacity.
+    public let inputPlaceholder: UIColor?
 
     /// The color of the file upload (attachment) button icon in the chat input. When nil,
     /// falls back to `userBubble`. Override this when `userBubble` does not contrast well
     /// with `backgroundColor` in light or dark mode.
     public let uploadButtonIcon: UIColor?
+
+    /// The color of the disclosure (disclaimer) text shown before any chat messages.
+    /// When nil, the default disclosure text color is used.
+    public let disclosure: UIColor?
+
+    /// The color of links within the disclosure (disclaimer) text.
+    public let disclosureLink: UIColor?
+
+    /// The color of links in chat bubbles for messages from the user.
+    public let userBubbleLink: UIColor?
+
+    /// The color of links in chat bubbles for messages from the AI assistant.
+    public let assistantBubbleLink: UIColor?
 
     /// The color of the optional disclosure text that appears before any chat messages.
     @available(*, deprecated)
@@ -171,7 +322,13 @@ public struct ChatStyleColors {
                 userBubble: UIColor = .systemBlue,
                 userBubbleText: UIColor = .white,
                 newChatButton: UIColor? = .systemBlue,
+                newChatButtonText: UIColor? = nil,
+                inputPlaceholder: UIColor? = nil,
                 uploadButtonIcon: UIColor? = nil,
+                disclosure: UIColor? = nil,
+                disclosureLink: UIColor? = nil,
+                userBubbleLink: UIColor? = nil,
+                assistantBubbleLink: UIColor? = nil,
                 disclosureText: UIColor = .secondaryLabel,
                 errorText: UIColor = .systemRed,
                 humanAgentTransferWaitingText: UIColor = .secondaryLabel,
@@ -186,7 +343,13 @@ public struct ChatStyleColors {
         self.userBubble = userBubble
         self.userBubbleText = userBubbleText
         self.newChatButton = newChatButton
+        self.newChatButtonText = newChatButtonText
+        self.inputPlaceholder = inputPlaceholder
         self.uploadButtonIcon = uploadButtonIcon
+        self.disclosure = disclosure
+        self.disclosureLink = disclosureLink
+        self.userBubbleLink = userBubbleLink
+        self.assistantBubbleLink = assistantBubbleLink
         self.disclosureText = disclosureText
         self.errorText = errorText
         self.statusText = humanAgentTransferWaitingText
@@ -307,8 +470,26 @@ extension ChatStyleColors {
         if let newChatButton = newChatButton {
             json["newChatButton"] = newChatButton.toHex()
         }
+        if let newChatButtonText = newChatButtonText {
+            json["newChatButtonText"] = newChatButtonText.toHex()
+        }
+        if let inputPlaceholder = inputPlaceholder {
+            json["inputPlaceholder"] = inputPlaceholder.toHex()
+        }
         if let uploadButtonIcon = uploadButtonIcon {
             json["uploadButtonIcon"] = uploadButtonIcon.toHex()
+        }
+        if let disclosure = disclosure {
+            json["disclosure"] = disclosure.toHex()
+        }
+        if let disclosureLink = disclosureLink {
+            json["disclosureLink"] = disclosureLink.toHex()
+        }
+        if let userBubbleLink = userBubbleLink {
+            json["userBubbleLink"] = userBubbleLink.toHex()
+        }
+        if let assistantBubbleLink = assistantBubbleLink {
+            json["assistantBubbleLink"] = assistantBubbleLink.toHex()
         }
         return json
     }
@@ -327,14 +508,20 @@ extension ChatStyleTypography {
             json["fontSize750"] = fontSize
             json["fontSize500"] = fontSize
         }
-        if let fontWeight = fontWeight {
-            json["fontWeight"] = fontWeight
+        // The deprecated top-level fontWeight/lineHeight/letterSpacing are
+        // intentionally not serialized -- there is no global weight/line-height/
+        // letter-spacing. Use the per-region overrides below instead.
+        if let userBubble = userBubble {
+            json["userBubble"] = userBubble.toJSON()
         }
-        if let lineHeight = lineHeight {
-            json["lineHeight"] = lineHeight
+        if let assistantBubble = assistantBubble {
+            json["assistantBubble"] = assistantBubble.toJSON()
         }
-        if let letterSpacing = letterSpacing {
-            json["letterSpacing"] = letterSpacing
+        if let titleBar = titleBar {
+            json["titleBar"] = titleBar.toJSON()
+        }
+        if let disclosure = disclosure {
+            json["disclosure"] = disclosure.toJSON()
         }
         return json
     }
