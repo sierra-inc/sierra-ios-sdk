@@ -27,6 +27,10 @@ public struct AgentAttachment {
 
 private let defaultMutePillBackgroundColor = UIColor(red: 231 / 255, green: 231 / 255, blue: 231 / 255, alpha: 1)
 private let defaultMutePillIconColor = UIColor(red: 17 / 255, green: 17 / 255, blue: 17 / 255, alpha: 1)
+private let messageRailHorizontalInset: CGFloat = 16
+private let pillControlsSpacing: CGFloat = 8
+private let compactControlsSpacing: CGFloat = 4
+private let compactComposerControlsSpacing: CGFloat = 8
 
 public struct AgentVoiceStyle {
     /// Background color for the native voice screen.
@@ -79,6 +83,10 @@ public struct AgentVoiceStyle {
     /// Transcript bubble typography in the mobile renderer.
     public var messageTypography: ChatStyleTypography
 
+    /// Tint color for the send arrow in the native text composer.
+    /// When nil, the default composer uses `messageColors.userBubble`.
+    public var textComposerSendButtonTintColor: UIColor?
+
     public init(
         backgroundColor: UIColor = .systemBackground,
         titleBarColor: UIColor = .systemBackground,
@@ -92,7 +100,8 @@ public struct AgentVoiceStyle {
         conversationDisclosureFont: UIFont = .systemFont(ofSize: 12, weight: .regular),
         rendererBackgroundColor: UIColor? = nil,
         messageColors: ChatStyleColors = DEFAULT_CHAT_STYLE_COLORS,
-        messageTypography: ChatStyleTypography = ChatStyleTypography()
+        messageTypography: ChatStyleTypography = ChatStyleTypography(),
+        textComposerSendButtonTintColor: UIColor? = nil
     ) {
         self.backgroundColor = backgroundColor
         self.titleBarColor = titleBarColor
@@ -107,6 +116,7 @@ public struct AgentVoiceStyle {
         self.rendererBackgroundColor = rendererBackgroundColor
         self.messageColors = messageColors
         self.messageTypography = messageTypography
+        self.textComposerSendButtonTintColor = textComposerSendButtonTintColor
     }
 
     @available(*, deprecated, message: "Use messageColors and messageTypography instead.")
@@ -122,6 +132,7 @@ public struct AgentVoiceStyle {
         conversationDisclosureTextColor: UIColor = .secondaryLabel,
         conversationDisclosureFont: UIFont = .systemFont(ofSize: 12, weight: .regular),
         rendererBackgroundColor: UIColor? = nil,
+        textComposerSendButtonTintColor: UIColor? = nil,
         userBubble: UIColor,
         userBubbleText: UIColor,
         assistantBubble: UIColor,
@@ -166,7 +177,8 @@ public struct AgentVoiceStyle {
                 fontSize: fontSize,
                 userBubble: messageBubble,
                 assistantBubble: messageBubble
-            )
+            ),
+            textComposerSendButtonTintColor: textComposerSendButtonTintColor
         )
     }
 
@@ -521,7 +533,7 @@ public extension AgentVoiceControllerOptions {
 /// (SVP WebSocket), while attachments are rendered by a MobileRendererView
 /// that loads the agent's web bundle directly -- no conversation state, no
 /// credential seeding, no refresh polling.
-public class AgentVoiceController: UIViewController, VoiceSessionDelegate, MobileRendererDelegate, UITextFieldDelegate {
+public class AgentVoiceController: UIViewController, VoiceSessionDelegate, MobileRendererDelegate {
     private let agent: Agent
     private var options: AgentVoiceControllerOptions
     private var voiceSession: VoiceSessionManager?
@@ -556,6 +568,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private var textComposerView: VoiceTextComposerView?
     private var normalButtonsStack: UIStackView?
     private var compactButtonsStack: UIStackView?
+    private var shouldNormalButtonsFillMessageRail = false
     private let disclosureLabel = UILabel()
     private var previousNavigationBarHidden: Bool?
     private var hasShutdownVoiceSession = false
@@ -1124,12 +1137,15 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         if usesLegacyControls(muteButton: muteButton, unmuteButton: unmuteButton, endButton: endButton) {
             buttonsStack.distribution = .fill
             buttonsStack.spacing = 28
+            shouldNormalButtonsFillMessageRail = false
         } else {
             buttonsStack.distribution = .fillEqually
-            buttonsStack.spacing = 10
+            buttonsStack.spacing = pillControlsSpacing
+            shouldNormalButtonsFillMessageRail = true
         }
         if let controlsDistribution = options.controlsDistribution {
             buttonsStack.distribution = controlsDistribution
+            shouldNormalButtonsFillMessageRail = false
         }
         if let controlsSpacing = options.controlsSpacing {
             buttonsStack.spacing = controlsSpacing
@@ -1182,8 +1198,13 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .horizontal
         stack.alignment = .center
-        stack.spacing = 8
-        stack.addArrangedSubview(makeMuteToggleContainer(muteButton: muteButton, unmuteButton: unmuteButton))
+        stack.spacing = compactControlsSpacing
+        let muteToggleContainer = makeMuteToggleContainer(muteButton: muteButton, unmuteButton: unmuteButton)
+        muteToggleContainer.setContentHuggingPriority(.required, for: .horizontal)
+        muteToggleContainer.setContentCompressionResistancePriority(.required, for: .horizontal)
+        endButton.setContentHuggingPriority(.required, for: .horizontal)
+        endButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        stack.addArrangedSubview(muteToggleContainer)
         stack.addArrangedSubview(endButton)
         compactButtonsStack = stack
         updateMuteControl(isMuted: isMuted)
@@ -1244,10 +1265,11 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             editingRow.translatesAutoresizingMaskIntoConstraints = false
             editingRow.axis = .horizontal
             editingRow.alignment = .center
-            editingRow.spacing = 8
+            editingRow.spacing = compactComposerControlsSpacing
             composer.setContentHuggingPriority(.defaultLow, for: .horizontal)
             composer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             compactControls.setContentHuggingPriority(.required, for: .horizontal)
+            compactControls.setContentCompressionResistancePriority(.required, for: .horizontal)
             compactControls.isHidden = true
             controlsStack.addArrangedSubview(editingRow)
             editingRow.widthAnchor.constraint(equalTo: controlsStack.widthAnchor).isActive = true
@@ -1268,10 +1290,12 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             controlsBottomConstraint,
 
             controlsStack.topAnchor.constraint(equalTo: controlsContainer.topAnchor, constant: 16),
-            controlsStack.leadingAnchor.constraint(equalTo: controlsContainer.leadingAnchor, constant: 20),
-            controlsStack.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -20),
+            controlsStack.leadingAnchor.constraint(equalTo: controlsContainer.leadingAnchor, constant: messageRailHorizontalInset),
+            controlsStack.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -messageRailHorizontalInset),
             controlsStack.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -controlsBottomPadding),
-            buttonsStack.widthAnchor.constraint(lessThanOrEqualTo: controlsStack.widthAnchor),
+            shouldNormalButtonsFillMessageRail
+                ? buttonsStack.widthAnchor.constraint(equalTo: controlsStack.widthAnchor)
+                : buttonsStack.widthAnchor.constraint(lessThanOrEqualTo: controlsStack.widthAnchor),
 
             disclosureLabel.leadingAnchor.constraint(equalTo: controlsContainer.leadingAnchor, constant: 24),
             disclosureLabel.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -24),
@@ -1280,8 +1304,13 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     }
 
     private func makeTextComposerView() -> UIView {
-        let composer = options.textComposerView ?? VoiceTextComposerView(placeholder: options.textComposerPlaceholder)
-        composer.textField.delegate = self
+        let composer = options.textComposerView ?? VoiceTextComposerView(
+            placeholder: options.textComposerPlaceholder,
+            sendButtonTintColor: options.voiceStyle.textComposerSendButtonTintColor ?? options.voiceStyle.messageColors.userBubble
+        )
+        composer.onEditingChanged = { [weak self] isEditing in
+            self?.updateTextComposerEditingState(isEditing: isEditing)
+        }
         composer.onSend = { [weak self] in
             self?.sendComposerText()
         }
@@ -1355,9 +1384,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             button.isEnabled = enabled
             button.alpha = alpha
         }
-        textComposerView?.textField.isEnabled = enabled && options.enableTextInput
-        textComposerView?.sendButton.isEnabled = enabled && options.enableTextInput
-        textComposerView?.alpha = (textComposerView?.textField.isEnabled == true) ? 1.0 : 0.5
+        textComposerView?.setEnabled(enabled && options.enableTextInput)
         navigationItem.rightBarButtonItem?.isEnabled = enabled
     }
 
@@ -1554,29 +1581,15 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         fireSwitchedToChatIfNeeded(agentInitiated: false)
     }
 
-    public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        sendComposerText()
-        return false
-    }
-
-    public func textFieldDidBeginEditing(_ textField: UITextField) {
-        updateTextComposerEditingState(isEditing: true)
-    }
-
-    public func textFieldDidEndEditing(_ textField: UITextField) {
-        updateTextComposerEditingState(isEditing: false)
-    }
-
     private func sendComposerText() {
         guard options.enableTextInput else { return }
-        let text = (textComposerView?.textField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = (textComposerView?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard voiceSession?.sendTextClient(text) == true else {
             debugLog("AgentVoiceController: text_client send skipped; voice session is not connected")
             return
         }
-        textComposerView?.textField.text = ""
-        textComposerView?.updateSendButtonVisibility(animated: false)
+        textComposerView?.text = ""
     }
 }
 

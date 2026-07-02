@@ -2,7 +2,7 @@
 
 import XCTest
 @testable import SierraSDK
-import SierraSDKVoice
+@testable import SierraSDKVoice
 
 final class SierraSDKTests: XCTestCase {
     func testAgentConfigDefaults() {
@@ -169,6 +169,38 @@ final class SierraSDKTests: XCTestCase {
         let queryItems = options.toQueryItems()
         XCTAssertFalse(queryItems.contains { $0.name == "variable" })
         XCTAssertFalse(queryItems.contains { $0.name == "secret" })
+    }
+
+    func testLinear16ByteCountMatchesMonoSampleWidth() {
+        // Mono linear16 is 2 bytes per sample. The echo-gate silence path and the converted-audio
+        // emit path both size their output through this helper, so equal frame counts must yield
+        // equal byte lengths -- that equal length is what keeps the server's reconstructed AudioIn
+        // timeline aligned with the real conversation. See CH-633.
+        XCTAssertEqual(AudioCaptureSession.linear16ByteCount(frameCount: 0), 0)
+        XCTAssertEqual(AudioCaptureSession.linear16ByteCount(frameCount: 1), 2)
+        XCTAssertEqual(AudioCaptureSession.linear16ByteCount(frameCount: 240), 480)
+    }
+
+    func testCapturePolicyPrecedence() {
+        // An audio-session interruption suspends the session, so it drops even when the user is
+        // also muted. User mute and speaking-mute emit silence to keep the server's byte-counted
+        // AudioIn clock advancing so agent audio stays aligned during playback. See CH-633.
+        XCTAssertEqual(
+            AudioCaptureSession.capturePolicy(interruptionPaused: true, userMuted: true, speakingMuted: true),
+            .drop
+        )
+        XCTAssertEqual(
+            AudioCaptureSession.capturePolicy(interruptionPaused: false, userMuted: true, speakingMuted: false),
+            .silence
+        )
+        XCTAssertEqual(
+            AudioCaptureSession.capturePolicy(interruptionPaused: false, userMuted: false, speakingMuted: true),
+            .silence
+        )
+        XCTAssertEqual(
+            AudioCaptureSession.capturePolicy(interruptionPaused: false, userMuted: false, speakingMuted: false),
+            .send
+        )
     }
 
     @MainActor

@@ -63,6 +63,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     private var pendingConversationEvents: [String] = []
     private var queuedConversationEvents: [String] = []
     private var isConversationEventFlushScheduled = false
+    private var isConversationEventEvaluationInFlight = false
     private let agent: Agent
     private let options: AgentVoiceControllerOptions
     private var scriptMessageHandler: WeakScriptMessageHandler?
@@ -256,21 +257,29 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
 
     private func flushQueuedConversationEvents() {
         isConversationEventFlushScheduled = false
-        guard isReady, !queuedConversationEvents.isEmpty else { return }
+        guard isReady, !isConversationEventEvaluationInFlight, !queuedConversationEvents.isEmpty else { return }
         let events = queuedConversationEvents
-        queuedConversationEvents.removeAll()
-        evaluatePushConversationEvents(events)
-    }
-
-    private func evaluatePushConversationEvents(_ events: [String]) {
         guard let data = try? JSONSerialization.data(withJSONObject: events),
               let json = String(data: data, encoding: .utf8) else {
             debugLog("MobileRenderer: Failed to serialize queued conversation events")
             return
         }
+        queuedConversationEvents.removeAll()
+        evaluatePushConversationEvents(events, json: json)
+    }
+
+    private func evaluatePushConversationEvents(_ events: [String], json: String) {
         debugLog("MobileRenderer: calling pushConversationEvents JS (count=\(events.count), json length=\(json.count))")
+        isConversationEventEvaluationInFlight = true
         Task { @MainActor [weak self] in
             guard let self else { return }
+            var didSucceed = false
+            defer {
+                self.isConversationEventEvaluationInFlight = false
+                if didSucceed {
+                    self.flushQueuedConversationEvents()
+                }
+            }
             do {
                 try await webView.callAsyncJavaScript(
                     """
@@ -285,8 +294,10 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
                     in: .page
                 )
                 debugLog("MobileRenderer: pushConversationEvents JS executed successfully")
+                didSucceed = true
             } catch {
                 debugLog("MobileRenderer: pushConversationEvents JS error: \(error)")
+                self.queuedConversationEvents = events + self.queuedConversationEvents
                 self.delegate?.mobileRenderer(self, didEncounterError: error)
             }
         }

@@ -576,7 +576,7 @@ public class VoiceSessionManager: NSObject {
                 self.stopAudio()
                 _ = self.setupAudio()
                 if !self.isUserListeningPaused {
-                    self.audioCaptureSession?.resumeListening()
+                    self.audioCaptureSession?.resumeFromInterruption()
                 }
             }
         }
@@ -598,7 +598,7 @@ public class VoiceSessionManager: NSObject {
             debugLog("SVP: Audio session interruption began")
             interruptionInProgress = true
             debugLog("SVP: Listening paused due to audio session interruption")
-            audioCaptureSession?.pauseListening()
+            audioCaptureSession?.pauseForInterruption()
             audioPlaybackQueue?.clear()
         case .ended:
             let shouldResume = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
@@ -607,9 +607,14 @@ public class VoiceSessionManager: NSObject {
             guard interruptionInProgress else { return }
             interruptionInProgress = false
             if shouldResume {
-                if reactivateAudioSessionIfNeeded(), !isUserListeningPaused {
+                // Always clear the interruption pause once the session reactivates, even if the
+                // user is muted: resumeFromInterruption() only clears the interruption flag (never
+                // the user-mute flag), and while muted the engine must keep running so the capture
+                // tap can emit silence. Gating this on !isUserListeningPaused left
+                // _isInterruptionPaused stuck true, so capturePolicy kept dropping forever. See CH-633.
+                if reactivateAudioSessionIfNeeded() {
                     debugLog("SVP: Listening resumed after interruption")
-                    audioCaptureSession?.resumeListening()
+                    audioCaptureSession?.resumeFromInterruption()
                 }
                 return
             }

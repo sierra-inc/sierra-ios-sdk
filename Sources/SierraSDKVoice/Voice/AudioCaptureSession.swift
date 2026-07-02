@@ -13,8 +13,20 @@ import SierraSDK
 /// - applying adaptive echo-gate filtering while agent speech is active
 final class AudioCaptureSession {
     private struct CaptureStateSnapshot {
-        let isListeningPaused: Bool
+        let isInterruptionPaused: Bool
+        let isUserMuted: Bool
+        let isSpeakingMuted: Bool
         let isSpeakingState: Bool
+    }
+
+    /// How the capture tap treats one buffer while audio capture is being suppressed.
+    enum CapturePolicy: Equatable {
+        /// Emit nothing (audio-session interruption: the session is suspended, timeline frozen).
+        case drop
+        /// Emit equal-length silence (user mute / speaking-mute: the call timeline keeps advancing).
+        case silence
+        /// Forward captured audio through the normal (echo-gated) path.
+        case send
     }
 
     var onAudioData: ((Data) -> Void)?
@@ -22,6 +34,29 @@ final class AudioCaptureSession {
     /// Emits the input RMS level from the audio tap thread, and zero from pause transitions.
     /// Callers must dispatch to their target queue before touching thread-confined state.
     var onInputLevel: ((Float) -> Void)?
+
+    /// Bytes per sample for the mono linear16 (signed 16-bit) transport format.
+    private static let linear16BytesPerSample = 2
+
+    /// Byte length of `frameCount` mono linear16 samples. Single source of truth shared by the
+    /// converted-audio emit path and the echo-gate silence path so both stay equal-length.
+    static func linear16ByteCount(frameCount: AVAudioFrameCount) -> Int {
+        Int(frameCount) * linear16BytesPerSample
+    }
+
+    /// Decides how a captured buffer is handled while capture is suppressed. Interruption wins and
+    /// drops, because the OS deactivated the audio session and the server's byte-counted AudioIn
+    /// clock is not advancing; user mute and speaking-mute emit equal-length silence so that clock
+    /// keeps advancing and agent audio stays aligned during playback. See CH-633.
+    static func capturePolicy(interruptionPaused: Bool, userMuted: Bool, speakingMuted: Bool) -> CapturePolicy {
+        if interruptionPaused {
+            return .drop
+        }
+        if userMuted || speakingMuted {
+            return .silence
+        }
+        return .send
+    }
 
     private let disableInterruptions: Bool
     private let sampleRate: Double
@@ -45,6 +80,7 @@ final class AudioCaptureSession {
     )
     private var _isListeningPaused = false
     private var _isSpeakingMuted = false
+    private var _isInterruptionPaused = false
     private var _isSpeakingState = false
 
     private var inputNode: AVAudioInputNode?
@@ -82,29 +118,55 @@ final class AudioCaptureSession {
         ) { [weak self] buffer, _ in
             guard let self, let converter = self.converter else { return }
             let stateSnapshot = self.captureStateSnapshot()
-            guard self.isRunning, !stateSnapshot.isListeningPaused else { return }
-
-            if stateSnapshot.isSpeakingState != self.lastTapSpeakingState {
-                // Keep echo gate state aligned with speaking-state edges.
-                self.resetEchoGateState()
-                self.lastTapSpeakingState = stateSnapshot.isSpeakingState
-            }
-
-            let rms = AudioLevelMeter.computeRMS(buffer: buffer)
-
-            if stateSnapshot.isSpeakingState && !self.disableInterruptions {
-                if !self.shouldPassSpeakingGate(rms: rms) {
-                    self.onInputLevel?(0)
-                    return
-                }
-            } else {
-                self.resetEchoGateState()
-            }
-            self.onInputLevel?(rms)
+            guard self.isRunning else { return }
 
             let frameCount = AVAudioFrameCount(
                 Double(buffer.frameLength) * self.sampleRate / inputFormat.sampleRate
             )
+
+            let policy = Self.capturePolicy(
+                interruptionPaused: stateSnapshot.isInterruptionPaused,
+                userMuted: stateSnapshot.isUserMuted,
+                speakingMuted: stateSnapshot.isSpeakingMuted
+            )
+            if policy == .drop {
+                // Audio-session interruption: the session is suspended, so emit nothing (status quo).
+                self.onInputLevel?(0)
+                return
+            }
+
+            // Decide whether this buffer is transmitted as captured audio or replaced by silence.
+            // Both outcomes are sized from the converter's actual output below, so substituted
+            // silence is exactly as long as the audio it replaces and the server's byte-counted
+            // AudioIn clock stays aligned. See CH-633.
+            let emitSilence: Bool
+            if policy == .silence {
+                // User mute or speaking-mute: keep the timeline advancing with silence. The real mic
+                // bytes are never transmitted while muted.
+                self.resetEchoGateState()
+                self.lastTapSpeakingState = stateSnapshot.isSpeakingState
+                self.onInputLevel?(0)
+                emitSilence = true
+            } else {
+                if stateSnapshot.isSpeakingState != self.lastTapSpeakingState {
+                    // Keep echo gate state aligned with speaking-state edges.
+                    self.resetEchoGateState()
+                    self.lastTapSpeakingState = stateSnapshot.isSpeakingState
+                }
+
+                let rms = AudioLevelMeter.computeRMS(buffer: buffer)
+
+                if stateSnapshot.isSpeakingState && !self.disableInterruptions {
+                    // A closed echo gate means these frames are agent echo, not user speech; replace
+                    // them with silence rather than dropping so the timeline keeps its true duration.
+                    emitSilence = !self.shouldPassSpeakingGate(rms: rms)
+                } else {
+                    self.resetEchoGateState()
+                    emitSilence = false
+                }
+                self.onInputLevel?(emitSilence ? 0 : rms)
+            }
+
             guard let convertedBuffer = AVAudioPCMBuffer(
                 pcmFormat: convertFormat,
                 frameCapacity: frameCount
@@ -121,12 +183,13 @@ final class AudioCaptureSession {
                 return
             }
 
-            if let channelData = convertedBuffer.int16ChannelData {
-                let data = Data(
-                    bytes: channelData[0],
-                    count: Int(convertedBuffer.frameLength) * 2
-                )
-                self.onAudioData?(data)
+            // Size both the silence and the captured payload from the converter's actual output so
+            // they are always identical length.
+            let byteCount = Self.linear16ByteCount(frameCount: convertedBuffer.frameLength)
+            if emitSilence {
+                self.onAudioData?(Data(count: byteCount))
+            } else if let channelData = convertedBuffer.int16ChannelData {
+                self.onAudioData?(Data(bytes: channelData[0], count: byteCount))
             }
         }
     }
@@ -153,6 +216,25 @@ final class AudioCaptureSession {
         }
     }
 
+    /// Suppress capture for an audio-session interruption (e.g. an incoming phone call). Unlike
+    /// user mute, this drops audio rather than emitting silence, because the OS has deactivated the
+    /// session and its timeline is not advancing. Distinct from `pauseListening()` so the two can
+    /// be told apart at the tap. See CH-633.
+    func pauseForInterruption() {
+        listeningPauseQueue.sync(flags: .barrier) {
+            _isInterruptionPaused = true
+            debugLog("SVP capture paused for audio-session interruption.")
+        }
+        onInputLevel?(0)
+    }
+
+    func resumeFromInterruption() {
+        listeningPauseQueue.sync(flags: .barrier) {
+            _isInterruptionPaused = false
+            debugLog("SVP capture resumed after audio-session interruption.")
+        }
+    }
+
     func setSpeakingState(_ isSpeaking: Bool) {
         listeningPauseQueue.sync(flags: .barrier) {
             self._isSpeakingState = isSpeaking
@@ -171,6 +253,7 @@ final class AudioCaptureSession {
         listeningPauseQueue.sync(flags: .barrier) {
             _isListeningPaused = false
             _isSpeakingMuted = false
+            _isInterruptionPaused = false
             _isSpeakingState = false
         }
     }
@@ -178,7 +261,9 @@ final class AudioCaptureSession {
     private func captureStateSnapshot() -> CaptureStateSnapshot {
         listeningPauseQueue.sync {
             CaptureStateSnapshot(
-                isListeningPaused: _isListeningPaused || _isSpeakingMuted,
+                isInterruptionPaused: _isInterruptionPaused,
+                isUserMuted: _isListeningPaused,
+                isSpeakingMuted: _isSpeakingMuted,
                 isSpeakingState: _isSpeakingState
             )
         }
