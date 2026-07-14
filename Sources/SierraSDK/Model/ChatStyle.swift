@@ -162,6 +162,9 @@ public struct ChatStyleTypography {
     /// Typography overrides for the disclosure (disclaimer) text.
     public let disclosure: ChatTextStyle?
 
+    /// Typography overrides for the message input text.
+    public let messageInput: ChatTextStyle?
+
     /// Custom fonts that are included in the app bundle.
     public let customFonts: [CustomFont]?
 
@@ -174,6 +177,7 @@ public struct ChatStyleTypography {
                 assistantBubble: ChatTextStyle? = nil,
                 titleBar: ChatTextStyle? = nil,
                 disclosure: ChatTextStyle? = nil,
+                messageInput: ChatTextStyle? = nil,
                 customFonts: [CustomFont]? = nil) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
@@ -184,6 +188,7 @@ public struct ChatStyleTypography {
         self.assistantBubble = assistantBubble
         self.titleBar = titleBar
         self.disclosure = disclosure
+        self.messageInput = messageInput
         self.customFonts = customFonts
     }
 }
@@ -246,6 +251,10 @@ public struct ChatStyleColors {
 
     /// The color of the border separating the user input from the chat messages.
     public let border: UIColor?
+
+    /// The background color of the message input area (the region below the divider
+    /// that contains the text input). When nil, falls back to `backgroundColor`.
+    public let inputBackground: UIColor?
 
     /// The color of the navigation bar of the chat view
     public let titleBar: UIColor
@@ -317,6 +326,7 @@ public struct ChatStyleColors {
     public init(backgroundColor: UIColor = .systemBackground,
                 text: UIColor? = .label,
                 border: UIColor? = .separator,
+                inputBackground: UIColor? = nil,
                 assistantBubble: UIColor = .systemGray6,
                 assistantBubbleText: UIColor = .label,
                 userBubble: UIColor = .systemBlue,
@@ -338,6 +348,7 @@ public struct ChatStyleColors {
         self.backgroundColor = backgroundColor
         self.text = text
         self.border = border
+        self.inputBackground = inputBackground
         self.assistantBubble = assistantBubble
         self.assistantBubbleText = assistantBubbleText
         self.userBubble = userBubble
@@ -467,6 +478,9 @@ extension ChatStyleColors {
         if let border = border {
             json["border"] = border.toHex()
         }
+        if let inputBackground = inputBackground {
+            json["inputBackground"] = inputBackground.toHex()
+        }
         if let newChatButton = newChatButton {
             json["newChatButton"] = newChatButton.toHex()
         }
@@ -522,6 +536,9 @@ extension ChatStyleTypography {
         }
         if let disclosure = disclosure {
             json["disclosure"] = disclosure.toJSON()
+        }
+        if let messageInput = messageInput {
+            json["messageInput"] = messageInput.toJSON()
         }
         return json
     }

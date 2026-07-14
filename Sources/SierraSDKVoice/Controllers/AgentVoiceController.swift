@@ -455,6 +455,9 @@ public struct AgentVoiceControllerOptions {
     /// When true, adds a text input and conversation-event transcript to the native voice surface.
     public var enableTextInput: Bool = false
 
+    /// When true with `enableTextInput`, streams live user transcription text in the renderer.
+    public var enableLiveTranscription: Bool = false
+
     /// Placeholder shown in the native text composer.
     public var textComposerPlaceholder: String = "Type a reply"
 

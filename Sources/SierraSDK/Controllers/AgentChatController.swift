@@ -24,6 +24,36 @@ public enum TextDirection: String {
     case auto = "auto"
 }
 
+/// Options for adding tags to the active conversation.
+public struct AddAgentTagsOptions {
+    /// Add tags as developer-only tags.
+    public var dev: Bool?
+    /// Skip tags already present on the conversation.
+    public var omitPresent: Bool?
+    /// Store `name:value` tags as custom fields visible in Agent Studio.
+    public var customField: Bool?
+
+    public init(dev: Bool? = nil, omitPresent: Bool? = nil, customField: Bool? = nil) {
+        self.dev = dev
+        self.omitPresent = omitPresent
+        self.customField = customField
+    }
+
+    package var jsonValue: [String: Bool] {
+        var value: [String: Bool] = [:]
+        if let dev {
+            value["dev"] = dev
+        }
+        if let omitPresent {
+            value["omitPresent"] = omitPresent
+        }
+        if let customField {
+            value["customField"] = customField
+        }
+        return value
+    }
+}
+
 public struct AgentChatControllerOptions {
     /// Name for this virtual agent, displayed as the navigation item title.
     public let name: String
@@ -149,6 +179,10 @@ public struct AgentChatControllerOptions {
     /// expand downward until the frame height has been reached, at which point older messages
     /// scroll out of view.
     public var startAtTop: Bool = false;
+
+    /// When true, removes the divider (top border) drawn between the chat transcript and the
+    /// message input area. Defaults to false.
+    public var removeInputDivider: Bool = false;
 
     /// Whether to show a scroll-to-bottom indicator when the user scrolls up in the chat.
     public var showScrollToBottom: Bool = false;
@@ -405,6 +439,10 @@ extension AgentChatControllerOptions {
 
         if startAtTop {
             queryItems.append(URLQueryItem(name: "startAtTop", value: "true"))
+        }
+
+        if removeInputDivider {
+            queryItems.append(URLQueryItem(name: "removeInputDivider", value: "true"))
         }
 
         if showScrollToBottom {
@@ -1283,6 +1321,40 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
         } catch {
             throw AgentChatError.invalidAttachments("Failed to send attachments: \(error.localizedDescription)")
         }
+    }
+
+    /// Add tags to the active conversation.
+    ///
+    /// Returns `true` when the tags were recorded. Returns `false` when the chat WebView is not
+    /// ready yet or there is no active conversation, matching the Android SDK. Throws only when the
+    /// underlying WebView fails to evaluate the request.
+    public func addAgentTags(_ tags: [String], options: AddAgentTagsOptions? = nil) async throws -> Bool {
+        let optionsArgument: Any
+        if let options {
+            optionsArgument = options.jsonValue
+        } else {
+            optionsArgument = NSNull()
+        }
+        let result = try await webView.callAsyncJavaScript(
+            """
+            const fn = window.sierraMobile?.addAgentTags;
+            if (typeof fn !== 'function') {
+              return false;
+            }
+            try {
+              return await fn(tags, options === null ? undefined : options);
+            } catch (e) {
+              return false;
+            }
+            """,
+            arguments: [
+                "tags": tags,
+                "options": optionsArgument
+            ],
+            in: nil,
+            in: .page
+        )
+        return result as? Bool ?? false
     }
 
     /// End the current conversation programmatically.

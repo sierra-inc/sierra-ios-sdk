@@ -157,6 +157,14 @@ final class SierraSDKTests: XCTestCase {
         )
     }
 
+    func testAddAgentTagsOptionsJSONIncludesOnlyConfiguredValues() {
+        let options = AddAgentTagsOptions(dev: true, omitPresent: nil, customField: false)
+
+        XCTAssertEqual(options.jsonValue["dev"], true)
+        XCTAssertNil(options.jsonValue["omitPresent"])
+        XCTAssertEqual(options.jsonValue["customField"], false)
+    }
+
     func testVariablesAndSecretsAreNotAddedToQueryItems() {
         var conversationOptions = ConversationOptions()
         conversationOptions.variables = ["userId": "12345"]

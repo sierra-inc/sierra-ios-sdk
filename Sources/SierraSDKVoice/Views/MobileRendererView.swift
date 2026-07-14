@@ -148,6 +148,9 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         if !messageStyleJSON.isEmpty {
             queryItems.append(URLQueryItem(name: "messageStyle", value: messageStyleJSON))
         }
+        if options.enableTextInput, options.enableLiveTranscription {
+            queryItems.append(URLQueryItem(name: "enableLiveTranscription", value: "true"))
+        }
 
         if !queryItems.isEmpty {
             urlComponents.queryItems = queryItems
