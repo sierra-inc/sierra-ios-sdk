@@ -1,5 +1,6 @@
 // Copyright Sierra
 
+import UIKit
 import XCTest
 @testable import SierraSDK
 @testable import SierraSDKVoice
@@ -221,6 +222,81 @@ final class SierraSDKTests: XCTestCase {
             XCTAssertNotNil(weakController)
         }
         XCTAssertNil(weakController, "AgentChatController must deallocate; a WKScriptMessageHandler retain cycle is leaking it")
+    }
+
+    @MainActor
+    func testLoadingSpinnerColorPrefersTextOverTitleBarText() {
+        // The Outfitters testbed preset: white title bar text is illegible on the cream chat
+        // background, while `text` is a dark green chosen to read on it. Keying off `text` keeps
+        // the branded color instead of flattening the spinner to black.
+        let brandGreen = UIColor(red: 0.14, green: 0.31, blue: 0.25, alpha: 1)
+        let colors = ChatStyleColors(
+            backgroundColor: UIColor(red: 0.96, green: 0.95, blue: 0.93, alpha: 1),
+            text: brandGreen,
+            titleBar: brandGreen,
+            titleBarText: .white
+        )
+
+        XCTAssertEqual(
+            colors.loadingSpinnerColor(using: UITraitCollection(userInterfaceStyle: .light)),
+            brandGreen
+        )
+    }
+
+    @MainActor
+    func testLoadingSpinnerColorStaysLegibleWhenTitleBarTextMatchesBackground() {
+        // A dark title bar with white text over a white chat background: the customer-reported
+        // case, and what the WellnessWave testbed preset produces. The background is static
+        // while the default `text` is dynamic, so dark mode flips `text` to white and the
+        // fallback has to catch it.
+        let colors = ChatStyleColors(backgroundColor: .white, titleBar: .black, titleBarText: .white)
+
+        for (style, name) in [(UIUserInterfaceStyle.light, "light"), (.dark, "dark")] {
+            let traitCollection = UITraitCollection(userInterfaceStyle: style)
+            let spinnerColor = colors.loadingSpinnerColor(using: traitCollection)
+
+            XCTAssertGreaterThanOrEqual(
+                spinnerColor.contrastRatio(against: colors.backgroundColor, using: traitCollection),
+                3,
+                "spinner must stay legible against the chat background it is drawn on in \(name) mode"
+            )
+        }
+    }
+
+    @MainActor
+    func testLoadingSpinnerColorFallsBackWhenTextIsLowContrast() {
+        // A custom dark background with no `text` override: the default `.label` assumes a system
+        // background and resolves to near-black in light mode, roughly 1.4:1 here.
+        let colors = ChatStyleColors(
+            backgroundColor: UIColor(red: 16 / 255, green: 34 / 255, blue: 76 / 255, alpha: 1)
+        )
+        let traitCollection = UITraitCollection(userInterfaceStyle: .light)
+
+        let spinnerColor = colors.loadingSpinnerColor(using: traitCollection)
+
+        XCTAssertEqual(spinnerColor, .white)
+        XCTAssertGreaterThanOrEqual(
+            spinnerColor.contrastRatio(against: colors.backgroundColor, using: traitCollection),
+            3
+        )
+    }
+
+    @MainActor
+    func testLoadingSpinnerColorResolvesPerAppearance() {
+        // The default colors are dynamic, so the spinner color has to be resolved against the
+        // active appearance rather than once when the controller is created.
+        let colors = ChatStyleColors()
+
+        for (style, name) in [(UIUserInterfaceStyle.light, "light"), (.dark, "dark")] {
+            let traitCollection = UITraitCollection(userInterfaceStyle: style)
+            let spinnerColor = colors.loadingSpinnerColor(using: traitCollection)
+
+            XCTAssertGreaterThanOrEqual(
+                spinnerColor.contrastRatio(against: colors.backgroundColor, using: traitCollection),
+                3,
+                "spinner must stay legible in \(name) mode"
+            )
+        }
     }
 }
 

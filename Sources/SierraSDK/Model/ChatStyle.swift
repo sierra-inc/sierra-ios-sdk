@@ -458,9 +458,78 @@ extension UIColor {
             )
         }
     }
+
+    /// The WCAG contrast ratio between this color and `other`, from 1 (identical) to 21
+    /// (black on white). Returns 0 when either color cannot be converted to RGB, so callers
+    /// treat it as failing any threshold.
+    package func contrastRatio(against other: UIColor, using traitCollection: UITraitCollection) -> CGFloat {
+        guard
+            let lhs = rgbaComponents(using: traitCollection),
+            let rhs = other.rgbaComponents(using: traitCollection)
+        else {
+            return 0
+        }
+        let lhsLuminance = relativeLuminance(red: lhs.red, green: lhs.green, blue: lhs.blue)
+        let rhsLuminance = relativeLuminance(red: rhs.red, green: rhs.green, blue: rhs.blue)
+        return (max(lhsLuminance, rhsLuminance) + 0.05) / (min(lhsLuminance, rhsLuminance) + 0.05)
+    }
+
+    /// Whichever of white or `darkColor` reads better against this color.
+    package func contrastingBlackOrWhite(
+        using traitCollection: UITraitCollection,
+        darkColor: UIColor = .black
+    ) -> UIColor {
+        guard let components = rgbaComponents(using: traitCollection) else {
+            return darkColor
+        }
+        let luminance = relativeLuminance(red: components.red, green: components.green, blue: components.blue)
+        let whiteContrast = (1.0 + 0.05) / (luminance + 0.05)
+        let blackContrast = (luminance + 0.05) / 0.05
+        return whiteContrast > blackContrast ? .white : darkColor
+    }
+
+    package func rgbaComponents(using traitCollection: UITraitCollection) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat)? {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard resolvedColor(with: traitCollection).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return nil
+        }
+        return (red, green, blue, alpha)
+    }
+
+    private func relativeLuminance(red: CGFloat, green: CGFloat, blue: CGFloat) -> CGFloat {
+        func linearized(_ component: CGFloat) -> CGFloat {
+            component <= 0.03928
+                ? component / 12.92
+                : CGFloat(pow(Double((component + 0.055) / 1.055), 2.4))
+        }
+        return 0.2126 * linearized(red) + 0.7152 * linearized(green) + 0.0722 * linearized(blue)
+    }
 }
 
 extension ChatStyleColors {
+    /// WCAG 1.4.11 non-text contrast minimum, applied to the loading spinner against the
+    /// background it is drawn on.
+    private static let minimumSpinnerContrastRatio: CGFloat = 3
+
+    /// The color for the native loading spinner shown while the web content is hidden.
+    ///
+    /// The spinner is drawn over `backgroundColor`, so it uses `text` -- the input text color,
+    /// which is drawn on that same background and so has already been chosen to read against it.
+    /// `text` still defaults to the dynamic `.label`, which assumes a system background, so a
+    /// custom `backgroundColor` can leave it illegible; in that case the spinner falls back to
+    /// whichever of black or white reads against the background.
+    package func loadingSpinnerColor(using traitCollection: UITraitCollection) -> UIColor {
+        let preferred = text ?? .label
+        let contrast = preferred.contrastRatio(against: backgroundColor, using: traitCollection)
+        if contrast >= Self.minimumSpinnerContrastRatio {
+            return preferred
+        }
+        return backgroundColor.contrastingBlackOrWhite(using: traitCollection)
+    }
+
     // Match the web embed's ChatStyle.colors shape.
     package func toJSON() -> [String: String?] {
         var json = [

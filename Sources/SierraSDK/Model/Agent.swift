@@ -316,6 +316,7 @@ enum AgentChatError: LocalizedError {
     case serverError(String)
     case httpError(Int)
     case invalidAttachments(String)
+    case sendUserMessageFailed(String)
 
     /// Logged message for the error
     var errorDescription: String? {
@@ -327,6 +328,8 @@ enum AgentChatError: LocalizedError {
         case .httpError(let code):
             return String(format: "An HTTP error occurred (code: %d)", code)
         case .invalidAttachments(let message):
+            return message
+        case .sendUserMessageFailed(let message):
             return message
         }
     }

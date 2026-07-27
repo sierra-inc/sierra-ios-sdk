@@ -133,8 +133,10 @@ public struct AgentChatControllerOptions {
     /// When useConfiguredStyle is true, the web content styling comes from the server.
     /// However, this property is still used for native iOS UI elements:
     /// - colors.titleBar: Navigation bar background color
-    /// - colors.titleBarText: Navigation bar text color and loading spinner color
+    /// - colors.titleBarText: Navigation bar text color
     /// - colors.backgroundColor: Container view and WebView background color
+    /// - colors.text: Loading spinner color, when it contrasts with colors.backgroundColor;
+    ///   otherwise the spinner falls back to black or white against that background
     /// - typography.customFonts: Custom fonts to load for the web content
     public var chatStyle: ChatStyle = DEFAULT_CHAT_STYLE
 
@@ -665,8 +667,9 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         // Make the content invisible until fully loaded
         webView.scrollView.alpha = 0.0
 
+        // The spinner color is resolved in startLoadingSpinner(), not here: this runs from init,
+        // before the controller is in a window and its trait collection is settled.
         let loadingSpinner = UIActivityIndicatorView(style: .large)
-        loadingSpinner.color = options.chatStyle.colors.titleBarText
         loadingSpinner.translatesAutoresizingMaskIntoConstraints = false
         loadingSpinner.hidesWhenStopped = true
 
@@ -713,7 +716,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         super.viewWillAppear(animated)
         // Try again to load if we didn't get successfully do it the first time we were shown.
         if !webViewLoaded {
-            self.loadingSpinner?.startAnimating()
+            startLoadingSpinner()
             loadChatURL()
         }
     }
@@ -744,9 +747,9 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         view.backgroundColor = options.chatStyle.colors.backgroundColor
         webView.backgroundColor = options.chatStyle.colors.backgroundColor
         webView.scrollView.backgroundColor = options.chatStyle.colors.backgroundColor
-        loadingSpinner?.color = options.chatStyle.colors.titleBarText
 
-        // Reload the WebView with updated color values
+        // Reload the WebView with updated color values. This restarts the spinner, which
+        // re-resolves its color for the new appearance.
         reloadWebViewForAppearanceChange()
     }
 
@@ -759,7 +762,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         revealFallbackWorkItem?.cancel()
         revealFallbackWorkItem = nil
         webView.scrollView.alpha = 0.0
-        loadingSpinner?.startAnimating()
+        startLoadingSpinner()
         let contentController = webView.configuration.userContentController
         contentController.removeAllUserScripts()
         addStorageUserScript(to: contentController)
@@ -904,6 +907,15 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     /// `onConversationReady`. Only reached when the embed does not send that message (e.g. an
     /// older embed build); the normal path reveals as soon as the transcript has rendered.
     private static let revealFallbackInterval: TimeInterval = 10
+
+    /// Starts the loading spinner, resolving its color against the current appearance. The color
+    /// is set here rather than once at setup time because it is derived from colors that can be
+    /// dynamic, and because the controller's trait collection is not settled until it is in a
+    /// window.
+    private func startLoadingSpinner() {
+        loadingSpinner?.color = options.chatStyle.colors.loadingSpinnerColor(using: traitCollection)
+        loadingSpinner?.startAnimating()
+    }
 
     /// Stops the loading spinner and fades in the web content. Idempotent: the reveal animation
     /// runs only once per load. Cancels any pending fallback reveal.
@@ -1189,7 +1201,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         })
         alert.addAction(UIAlertAction(title: "Retry", style: .default) { [weak self] _ in
             self?.loadChatURL()
-            self?.loadingSpinner?.startAnimating()
+            self?.startLoadingSpinner()
         })
         present(alert, animated: true)
     }
@@ -1311,16 +1323,47 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
                 }
                 throw new Error('sendUserAttachment is not available');
                 """,
-                arguments: ["attachments": attachments.map { [
-                    "type": $0.type.rawValue,
-                    "data": $0.data
-                ] }],
+                arguments: ["attachments": serializedAttachments(attachments)],
                 in: nil,
                 in: .page
             )
         } catch {
             throw AgentChatError.invalidAttachments("Failed to send attachments: \(error.localizedDescription)")
         }
+    }
+
+    /// Send a user message with optional attachments.
+    /// - Parameters:
+    ///   - message: Text to send on behalf of the user.
+    ///   - attachments: Optional attachments to include with the message.
+    /// - Throws: An error if the message or attachments cannot be sent.
+    public func sendUserMessage(_ message: String, attachments: [UserAttachment] = []) async throws {
+        do {
+            _ = try await webView.callAsyncJavaScript(
+                """
+                const fn = window.sierraMobile?.sendUserMessage;
+                if (typeof fn === 'function') {
+                  return fn(message, attachments);
+                }
+                throw new Error('sendUserMessage is not available');
+                """,
+                arguments: [
+                    "message": message,
+                    "attachments": serializedAttachments(attachments)
+                ],
+                in: nil,
+                in: .page
+            )
+        } catch {
+            throw AgentChatError.sendUserMessageFailed("Failed to send user message: \(error.localizedDescription)")
+        }
+    }
+
+    private func serializedAttachments(_ attachments: [UserAttachment]) -> [[String: Any]] {
+        attachments.map { [
+            "type": $0.type.rawValue,
+            "data": $0.data
+        ] }
     }
 
     /// Add tags to the active conversation.

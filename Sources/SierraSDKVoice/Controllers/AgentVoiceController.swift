@@ -1107,7 +1107,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         else {
             return configuredIconColor
         }
-        return backgroundColor.contrastingBlackOrWhite(using: traitCollection)
+        return backgroundColor.contrastingBlackOrWhite(
+            using: traitCollection,
+            darkColor: defaultMutePillIconColor
+        )
     }
 
     private func defaultEndCallButton() -> UIButton {
@@ -1637,35 +1640,5 @@ private extension UIColor {
             abs(lhs.green - rhs.green) < tolerance &&
             abs(lhs.blue - rhs.blue) < tolerance &&
             abs(lhs.alpha - rhs.alpha) < tolerance
-    }
-
-    func contrastingBlackOrWhite(using traitCollection: UITraitCollection) -> UIColor {
-        guard let components = rgbaComponents(using: traitCollection) else {
-            return defaultMutePillIconColor
-        }
-        let luminance = relativeLuminance(red: components.red, green: components.green, blue: components.blue)
-        let whiteContrast = (1.0 + 0.05) / (luminance + 0.05)
-        let blackContrast = (luminance + 0.05) / 0.05
-        return whiteContrast > blackContrast ? .white : defaultMutePillIconColor
-    }
-
-    private func rgbaComponents(using traitCollection: UITraitCollection) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat)? {
-        var red: CGFloat = 0
-        var green: CGFloat = 0
-        var blue: CGFloat = 0
-        var alpha: CGFloat = 0
-        guard resolvedColor(with: traitCollection).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
-            return nil
-        }
-        return (red, green, blue, alpha)
-    }
-
-    private func relativeLuminance(red: CGFloat, green: CGFloat, blue: CGFloat) -> CGFloat {
-        func linearized(_ component: CGFloat) -> CGFloat {
-            component <= 0.03928
-                ? component / 12.92
-                : CGFloat(pow(Double((component + 0.055) / 1.055), 2.4))
-        }
-        return 0.2126 * linearized(red) + 0.7152 * linearized(green) + 0.0722 * linearized(blue)
     }
 }
