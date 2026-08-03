@@ -104,7 +104,7 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(delegate.showChatRequestCount, 0)
     }
 
-    func testAgentVoiceChatCoordinatorAutoShowChatRequiresCanSwitchToChat() {
+    func testAgentVoiceChatCoordinatorAutoShowChatDoesNotRequireCanSwitchToChat() {
         let config = AgentConfig(token: "test-token")
         let agent = Agent(config: config)
         let coordinator = AgentVoiceChatCoordinator(
@@ -121,8 +121,26 @@ final class SierraSDKTests: XCTestCase {
 
         coordinator.onVoiceEnded()
 
-        XCTAssertEqual(delegate.voiceDidEndCount, 1)
-        XCTAssertEqual(delegate.showChatRequestCount, 0)
+        XCTAssertEqual(delegate.voiceDidEndCount, 0)
+        XCTAssertEqual(delegate.showChatRequestCount, 1)
+    }
+
+    func testAgentVoiceChatCoordinatorCanHideSwitchButtonWhileAutoShowingChatOnEnd() {
+        let config = AgentConfig(token: "test-token")
+        let agent = Agent(config: config)
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat"),
+                canSwitchToChat: false,
+                autoShowChatOnEnd: true
+            )
+        )
+
+        let voiceController = coordinator.makeVoiceController()
+
+        XCTAssertNil(voiceController.navigationItem.rightBarButtonItem)
     }
 
     func testConversationStateForwardedAsStateQueryItem() {

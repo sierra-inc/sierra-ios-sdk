@@ -71,11 +71,12 @@ public final class AgentVoiceChatCoordinator {
         /// greet the user and acknowledge the return to voice.
         public var canReconnectToVoice: Bool = false
 
-        /// When true (and `canSwitchToChat` is also true), the voice session's natural end --
-        /// whether the user taps the End button or the agent ends the conversation server-side --
-        /// is treated like a switch-to-chat: the coordinator fires
-        /// `coordinatorDidRequestShowingChat` instead of `coordinatorVoiceDidEnd`, and the chat
-        /// view opens with the voice transcript seeded. No-op if `canSwitchToChat` is false.
+        /// When true, the voice session's natural end -- whether the user taps the End button or
+        /// the agent ends the conversation server-side -- is treated like a switch-to-chat: the
+        /// coordinator fires `coordinatorDidRequestShowingChat` instead of
+        /// `coordinatorVoiceDidEnd`, and the chat view opens with the voice transcript seeded.
+        /// Independent from `canSwitchToChat`, which only controls whether the manual navigation
+        /// bar button is shown.
         public var autoShowChatOnEnd: Bool = true
 
         public init(
@@ -134,10 +135,8 @@ public final class AgentVoiceChatCoordinator {
         voiceOptions.onSwitchToChat = { [weak self] agentInitiated in
             self?.handleSwitchToChat(agentInitiated: agentInitiated)
         }
-        if options.canSwitchToChat {
-            voiceOptions.canSwitchToChat = true
-            voiceOptions.endRoutesToChat = options.autoShowChatOnEnd
-        }
+        voiceOptions.canSwitchToChat = options.canSwitchToChat
+        voiceOptions.autoShowChatOnEnd = options.autoShowChatOnEnd
 
         let voiceController = AgentVoiceController(agent: agent, options: voiceOptions)
         voiceController.voiceCallbacks = self
@@ -296,7 +295,7 @@ private final class ChatCallbacksAdapter: ConversationCallbacks {
 
 extension AgentVoiceChatCoordinator: VoiceCallbacks {
     public func onVoiceEnded() {
-        if options.canSwitchToChat && options.autoShowChatOnEnd {
+        if options.autoShowChatOnEnd {
             handleSwitchToChat(agentInitiated: false)
             return
         }

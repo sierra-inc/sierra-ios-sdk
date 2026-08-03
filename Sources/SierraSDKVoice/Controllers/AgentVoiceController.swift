@@ -493,9 +493,8 @@ public struct AgentVoiceControllerOptions {
     internal var onSwitchToChat: ((_ agentInitiated: Bool) -> Void)?
 
     /// When true, tapping End closes the SVP session with the `continue_in_chat` close reason and
-    /// invokes `onSwitchToChat` instead of `onVoiceEnded`. Set by `AgentVoiceChatCoordinator` when
-    /// `autoShowChatOnEnd` is enabled.
-    internal var endRoutesToChat: Bool = false
+    /// invokes `onSwitchToChat` instead of `onVoiceEnded`.
+    internal var autoShowChatOnEnd: Bool = false
 
     /// Optional hint describing why the client is resuming. Only meaningful when
     /// `resumeConversation` is true; when set, the server emits a `continue-in-voice` client event
@@ -1575,7 +1574,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     }
 
     @objc private func endTapped() {
-        if options.endRoutesToChat {
+        if options.autoShowChatOnEnd {
             switchToChatTapped()
             return
         }

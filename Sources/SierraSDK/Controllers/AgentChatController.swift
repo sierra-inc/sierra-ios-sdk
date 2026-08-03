@@ -14,6 +14,17 @@ public enum MessageLabelPlacement: String {
     case below = "below"
 }
 
+/// Controls which view(s) the disclosure text is displayed in.
+public enum DisclosurePlacement: String {
+    /// Display the disclosure above the conversation transcript.
+    case conversation = "conversation"
+    /// Display the disclosure below the "start new chat" button in the conversation
+    /// list, and not in the conversation itself. Requires `enableConversationList`.
+    case conversationList = "conversationList"
+    /// Display the disclosure in both views.
+    case both = "both"
+}
+
 /// Controls the text direction of the chat interface.
 public enum TextDirection: String {
     /// Left-to-right layout (default).
@@ -190,8 +201,13 @@ public struct AgentChatControllerOptions {
     public var showScrollToBottom: Bool = false;
 
     /// Pin the disclosure text to the top of the chat frame so that it is visible throughout
-    /// the conversation and never scrolls out of view.
+    /// the conversation and never scrolls out of view. This controls where the disclosure sits
+    /// within the conversation view, and has no effect when disclosurePlacement is
+    /// `.conversationList`.
     public var pinDisclosure: Bool = false;
+
+    /// Which view(s) the disclosure text is displayed in. Defaults to `.conversation`.
+    public var disclosurePlacement: DisclosurePlacement = .conversation
 
     /// Whether to show timestamps on chat messages. When nil and useConfiguredStyle is true, the
     /// server-configured value is used.
@@ -453,6 +469,10 @@ extension AgentChatControllerOptions {
 
         if pinDisclosure {
             queryItems.append(URLQueryItem(name: "pinDisclosure", value: "true"))
+        }
+
+        if disclosurePlacement != .conversation {
+            queryItems.append(URLQueryItem(name: "disclosurePlacement", value: disclosurePlacement.rawValue))
         }
 
         if canSaveTranscript {
