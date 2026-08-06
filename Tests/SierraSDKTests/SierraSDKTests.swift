@@ -176,6 +176,24 @@ final class SierraSDKTests: XCTestCase {
         )
     }
 
+    func testConfirmEndConversationModeDefaultsToAlwaysAndIsOmittedFromURL() {
+        let options = AgentChatControllerOptions(name: "Test")
+
+        XCTAssertEqual(options.confirmEndConversationMode, .always)
+        XCTAssertFalse(
+            options.toQueryItems().contains { $0.name == "confirmEndConversationMode" }
+        )
+    }
+
+    func testLiveChatConfirmEndConversationModeIsForwardedAsQueryItem() {
+        var options = AgentChatControllerOptions(name: "Test")
+        options.confirmEndConversationMode = .liveChat
+        let items = options.toQueryItems().filter { $0.name == "confirmEndConversationMode" }
+
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.first?.value, "liveChat")
+    }
+
     func testAddAgentTagsOptionsJSONIncludesOnlyConfiguredValues() {
         let options = AddAgentTagsOptions(dev: true, omitPresent: nil, customField: false)
 

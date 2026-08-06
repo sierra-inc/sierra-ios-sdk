@@ -25,6 +25,14 @@ public enum DisclosurePlacement: String {
     case both = "both"
 }
 
+/// Controls when an enabled end-conversation confirmation is shown.
+public enum EndConversationConfirmationMode: String {
+    /// Confirm whenever the user ends a conversation.
+    case always = "always"
+    /// Confirm only while waiting for or speaking with a human agent.
+    case liveChat = "liveChat"
+}
+
 /// Controls the text direction of the chat interface.
 public enum TextDirection: String {
     /// Left-to-right layout (default).
@@ -172,9 +180,13 @@ public struct AgentChatControllerOptions {
     /// effective when `canEndConversation` is true.
     public var confirmEndConversation: Bool = false;
 
+    /// Controls when confirmation is shown when `confirmEndConversation` is true.
+    public var confirmEndConversationMode: EndConversationConfirmationMode = .always
+
     /// If set to true, an end conversation button is shown in the chat footer (above the input)
-    /// while the user is speaking with a live agent. Only effective when `canEndConversation` is
-    /// true.
+    /// while the user is waiting for or speaking with a live agent. While waiting, the agent's
+    /// transfer waiting message takes precedence when the agent has it enabled. Only effective
+    /// when `canEndConversation` is true.
     public var footerEndConversationButton: Bool = false;
 
     /// If set to true, indicates the app uses a custom action bar and the SDK should not show
@@ -445,6 +457,15 @@ extension AgentChatControllerOptions {
 
         if confirmEndConversation {
             queryItems.append(URLQueryItem(name: "confirmEndConversation", value: "true"))
+        }
+
+        if confirmEndConversationMode == .liveChat {
+            queryItems.append(
+                URLQueryItem(
+                    name: "confirmEndConversationMode",
+                    value: confirmEndConversationMode.rawValue
+                )
+            )
         }
 
         if footerEndConversationButton {
@@ -1422,8 +1443,9 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
 
     /// End the current conversation programmatically.
     /// This is the public API that customers can call themselves. When
-    /// `confirmEndConversation` is enabled, the user is asked to confirm before
-    /// the conversation actually ends.
+    /// `confirmEndConversation` is enabled and `confirmEndConversationMode`
+    /// applies, the user is asked to confirm before the conversation actually
+    /// ends.
     public func endConversation() async {
         debugLog("Ending conversation")
         do {
