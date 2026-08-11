@@ -15,6 +15,13 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertNil(config.headlessAPIToken)
     }
 
+    func testRegionalAgentAPIHosts() {
+        XCTAssertEqual(AgentAPIHost.jp.apiBaseURL, "https://jp.api.sierra.chat")
+        XCTAssertEqual(AgentAPIHost.jp.embedBaseURL, "https://jp.sierra.chat")
+        XCTAssertEqual(AgentAPIHost.au.apiBaseURL, "https://au.api.sierra.chat")
+        XCTAssertEqual(AgentAPIHost.au.embedBaseURL, "https://au.sierra.chat")
+    }
+
     func testAgentVoiceChatCoordinatorRestoresPersistedConversationState() throws {
         let config = AgentConfig(token: "test-token")
         let agent = Agent(config: config)

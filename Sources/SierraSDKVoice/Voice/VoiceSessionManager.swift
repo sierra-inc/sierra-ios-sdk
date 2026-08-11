@@ -58,6 +58,10 @@ public protocol VoiceSessionDelegate: AnyObject {
     func voiceSession(_ session: VoiceSessionManager, didReceiveResumeToken token: String)
     func voiceSession(_ session: VoiceSessionManager, didUpdateInputAudioLevel level: Float)
     func voiceSession(_ session: VoiceSessionManager, didUpdateOutputAudioLevel level: Float)
+    /// Per-band microphone levels for the voice waveform, each normalized to `0...1`.
+    func voiceSession(_ session: VoiceSessionManager, didUpdateInputAudioBands bands: [Float])
+    /// Per-band agent-speech levels for the voice waveform, each normalized to `0...1`.
+    func voiceSession(_ session: VoiceSessionManager, didUpdateOutputAudioBands bands: [Float])
 }
 
 public extension VoiceSessionDelegate {
@@ -68,6 +72,8 @@ public extension VoiceSessionDelegate {
     func voiceSession(_ session: VoiceSessionManager, didReceiveResumeToken token: String) {}
     func voiceSession(_ session: VoiceSessionManager, didUpdateInputAudioLevel level: Float) {}
     func voiceSession(_ session: VoiceSessionManager, didUpdateOutputAudioLevel level: Float) {}
+    func voiceSession(_ session: VoiceSessionManager, didUpdateInputAudioBands bands: [Float]) {}
+    func voiceSession(_ session: VoiceSessionManager, didUpdateOutputAudioBands bands: [Float]) {}
 }
 
 /// Canonical SVP close reasons understood by the Sierra Voice Protocol server.
@@ -157,7 +163,13 @@ public class VoiceSessionManager: NSObject {
     private let sampleRate: Double = 24000
     private let compatibilityDate = "2026-05-07"
     private let preferredIOBufferDuration: Double = 0.02
-    private let inputTapDuration: Double = 0.02
+    private let waveformAnalysisInterval: Double = 0.02
+
+    /// Requests 50 Hz analyser targets. CADisplayLink applies the Web SDK's smoothing at the actual
+    /// display cadence, just as requestAnimationFrame does in the browser.
+    static func waveformTapBufferSize(sampleRate: Double, interval: Double) -> AVAudioFrameCount {
+        AVAudioFrameCount(max(64, Int((sampleRate * interval).rounded())))
+    }
 
     private static let stateTimestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -310,7 +322,11 @@ public class VoiceSessionManager: NSObject {
         }
 
         let inputFormat = inputNode.outputFormat(forBus: 0)
-        let capture = AudioCaptureSession(disableInterruptions: disableInterruptions, sampleRate: sampleRate, inputTapDuration: inputTapDuration)
+        let capture = AudioCaptureSession(
+            disableInterruptions: disableInterruptions,
+            sampleRate: sampleRate,
+            inputTapDuration: waveformAnalysisInterval
+        )
         capture.onAudioData = { [weak self] data in
             self?.sendAudioClient(data)
         }
@@ -320,8 +336,15 @@ public class VoiceSessionManager: NSObject {
                 self.delegate?.voiceSession(self, didUpdateInputAudioLevel: level)
             }
         }
+        capture.onInputBands = { [weak self] bands in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.delegate?.voiceSession(self, didUpdateInputAudioBands: bands)
+            }
+        }
         capture.start(inputNode: inputNode, inputFormat: inputFormat)
-        installPlayerLevelTap(player: player, format: outputFormat)
+        let outputSpectrumAnalyser = AudioSpectrumAnalyser()
+        installPlayerLevelTap(player: player, format: outputFormat, spectrumAnalyser: outputSpectrumAnalyser)
         capture.setSpeakingState(currentState() == .speaking)
         if disableInterruptions {
             let state = currentState()
@@ -345,7 +368,12 @@ public class VoiceSessionManager: NSObject {
         }
         playback.onDidStopSpeaking = { [weak self] in
             guard let self else { return }
+            // Web Audio keeps rendering silence after playback ends. AVAudioPlayerNode may stop tap
+            // callbacks with the final scheduled buffer, so iOS explicitly resets the analyser and
+            // targets zero; VoiceWaveformView still applies the same visible release coefficient.
+            outputSpectrumAnalyser.reset()
             self.delegate?.voiceSession(self, didUpdateOutputAudioLevel: 0)
+            self.delegate?.voiceSession(self, didUpdateOutputAudioBands: AudioSpectrumAnalyser.restingLevels())
             if self.currentState() == .speaking {
                 self.setState(.listening)
             }
@@ -385,18 +413,35 @@ public class VoiceSessionManager: NSObject {
         try? AVAudioSession.sharedInstance().setActive(false)
     }
 
-    private func installPlayerLevelTap(player: AVAudioPlayerNode, format: AVAudioFormat) {
-        let bufferSize: AVAudioFrameCount = 1024
+    private func installPlayerLevelTap(
+        player: AVAudioPlayerNode,
+        format: AVAudioFormat,
+        spectrumAnalyser: AudioSpectrumAnalyser
+    ) {
+        let bufferSize = Self.waveformTapBufferSize(
+            sampleRate: format.sampleRate,
+            interval: waveformAnalysisInterval
+        )
         var lastDispatchedLevel: Float = 0
         player.installTap(onBus: 0, bufferSize: bufferSize, format: format) { [weak self] buffer, _ in
             guard let self else { return }
             let level = AudioLevelMeter.computeRMS(buffer: buffer)
             if level == 0, lastDispatchedLevel == 0 { return }
             lastDispatchedLevel = level
+            let bands: [Float]
+            if level == 0 {
+                // Playback just went quiet, so drop the smoothing rather than letting the next
+                // utterance ramp out of stale bands.
+                spectrumAnalyser.reset()
+                bands = AudioSpectrumAnalyser.restingLevels()
+            } else {
+                bands = spectrumAnalyser.analyse(buffer: buffer)
+            }
             DispatchQueue.main.async {
                 let state = self.currentState()
                 guard state == .speaking || (state == .listening && level > 0) else { return }
                 self.delegate?.voiceSession(self, didUpdateOutputAudioLevel: level)
+                self.delegate?.voiceSession(self, didUpdateOutputAudioBands: bands)
             }
         }
     }

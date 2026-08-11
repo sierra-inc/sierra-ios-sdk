@@ -9,11 +9,12 @@ public protocol VoiceMuteLevelDisplaying: AnyObject {
 }
 
 final class VoiceAudioLevelView: UIView {
-    var inputColor: UIColor = UIColor(red: 0 / 255, green: 212 / 255, blue: 255 / 255, alpha: 1) {
+    /// Shares the voice waveform's colors so the two audio-level surfaces on the voice screen agree.
+    var inputColor: UIColor = DEFAULT_VOICE_WAVEFORM_USER_COLOR {
         didSet { setNeedsDisplay() }
     }
 
-    var outputColor: UIColor = UIColor(red: 180 / 255, green: 217 / 255, blue: 140 / 255, alpha: 1) {
+    var outputColor: UIColor = DEFAULT_VOICE_WAVEFORM_AGENT_COLOR {
         didSet { setNeedsDisplay() }
     }
 

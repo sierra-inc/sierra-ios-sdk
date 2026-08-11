@@ -43,7 +43,6 @@ public struct AgentVoiceStyle {
     public var titleBarTextColor: UIColor
 
     /// Legacy control tint retained for compatibility with existing style initializers.
-    /// The default center placeholder keeps the original system waveform styling.
     @available(*, deprecated, message: "No longer applied; pass colors to the legacy/pill buttons directly.")
     public var controlsColor: UIColor {
         get { legacyControlsColor }
@@ -87,6 +86,17 @@ public struct AgentVoiceStyle {
     /// When nil, the default composer uses `messageColors.userBubble`.
     public var textComposerSendButtonTintColor: UIColor?
 
+    /// Color of the voice waveform bars driven by the agent's speech.
+    public var voiceWaveformAgentColor: UIColor
+
+    /// Color of the voice waveform bars driven by the end user's microphone.
+    public var voiceWaveformUserColor: UIColor
+
+    /// Scales the waveform shown during a voice call, as a multiplier of its default size: `1` (the
+    /// default) leaves it unchanged, `0.5` renders it at half size, and `2` at double size. Values
+    /// outside `0` to `3` are clamped, so a bad value can't break the voice screen layout.
+    public var voiceWaveformSize: CGFloat
+
     public init(
         backgroundColor: UIColor = .systemBackground,
         titleBarColor: UIColor = .systemBackground,
@@ -101,7 +111,10 @@ public struct AgentVoiceStyle {
         rendererBackgroundColor: UIColor? = nil,
         messageColors: ChatStyleColors = DEFAULT_CHAT_STYLE_COLORS,
         messageTypography: ChatStyleTypography = ChatStyleTypography(),
-        textComposerSendButtonTintColor: UIColor? = nil
+        textComposerSendButtonTintColor: UIColor? = nil,
+        voiceWaveformAgentColor: UIColor = DEFAULT_VOICE_WAVEFORM_AGENT_COLOR,
+        voiceWaveformUserColor: UIColor = DEFAULT_VOICE_WAVEFORM_USER_COLOR,
+        voiceWaveformSize: CGFloat = DEFAULT_VOICE_WAVEFORM_SCALE
     ) {
         self.backgroundColor = backgroundColor
         self.titleBarColor = titleBarColor
@@ -117,6 +130,9 @@ public struct AgentVoiceStyle {
         self.messageColors = messageColors
         self.messageTypography = messageTypography
         self.textComposerSendButtonTintColor = textComposerSendButtonTintColor
+        self.voiceWaveformAgentColor = voiceWaveformAgentColor
+        self.voiceWaveformUserColor = voiceWaveformUserColor
+        self.voiceWaveformSize = voiceWaveformSize
     }
 
     @available(*, deprecated, message: "Use messageColors and messageTypography instead.")
@@ -403,11 +419,10 @@ public struct AgentVoiceControllerOptions {
     /// renderable attachment is displayed.
     public var voicePlaceholderText: String = "How can I help you today?"
 
-    /// Optional icon override for the central waveform placeholder. Use an
-    /// SVG/vector asset from the host app asset catalog or any `UIImage`. The
-    /// image is rendered as-provided (its own colors), so pass a template image
-    /// if you want it tinted. It is shown statically, without the speaking-state
-    /// pulse animation applied to the default waveform.
+    /// Optional icon override for the central waveform. Use an SVG/vector asset from the host app
+    /// asset catalog or any `UIImage`. The image is rendered as-provided (its own colors), so pass a
+    /// template image if you want it tinted. It replaces the live waveform entirely and is shown
+    /// statically, so `voiceStyle.voiceWaveformSize` and the waveform colors do not apply.
     public var voiceWaveformIcon: UIImage?
 
     /// Optional disclosure text shown below the native mute/end controls.
@@ -550,8 +565,22 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private var latestInputAudioLevel: Float = 0
     private var latestOutputAudioLevel: Float = 0
 
+    /// The center visual shown above the placeholder label: the live waveform by default, or the
+    /// host's static `voiceWaveformIcon` when one is supplied. Exactly one exists per controller.
+    private enum PlaceholderCenterVisual {
+        case waveform(VoiceWaveformView)
+        case icon(UIImageView)
+
+        var view: UIView {
+            switch self {
+            case .waveform(let waveform): return waveform
+            case .icon(let icon): return icon
+            }
+        }
+    }
+
     private let placeholderContainer = UIView()
-    private let placeholderWaveformIcon = UIImageView()
+    private let placeholderCenterVisual: PlaceholderCenterVisual
     private let placeholderLabel = UILabel()
     private let loadingContainer = UIView()
     private let loadingIndicator = UIActivityIndicatorView(style: .large)
@@ -588,6 +617,11 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     public init(agent: Agent, options: AgentVoiceControllerOptions = AgentVoiceControllerOptions(name: "Voice Agent")) {
         self.agent = agent
         self.options = options
+        if let waveformIcon = options.voiceWaveformIcon {
+            placeholderCenterVisual = .icon(UIImageView(image: waveformIcon))
+        } else {
+            placeholderCenterVisual = .waveform(VoiceWaveformView())
+        }
         let trimmedTitleBarMessage = options.titleBarMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = (trimmedTitleBarMessage?.isEmpty == false) ? trimmedTitleBarMessage! : options.name
         super.init(nibName: nil, bundle: nil)
@@ -752,6 +786,15 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         }
     }
 
+    public func voiceSession(_ session: VoiceSessionManager, didUpdateInputAudioBands bands: [Float]) {
+        guard !isMuted else { return }
+        setWaveformUserLevels(bands)
+    }
+
+    public func voiceSession(_ session: VoiceSessionManager, didUpdateOutputAudioBands bands: [Float]) {
+        setWaveformAgentLevels(bands)
+    }
+
     public func voiceSession(_ session: VoiceSessionManager, didReceiveConversationEvent event: AgentVoiceConversationEvent) {
         DispatchQueue.main.async {
             guard self.options.enableTextInput, !self.rendererFailed else {
@@ -847,7 +890,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         guard !hasShownFirstAttachment else { return }
         hasShownFirstAttachment = true
         placeholderContainer.isHidden = true
-        stopWaveformAnimation()
+        placeholderWaveform?.resetLevels()
         renderer?.isHidden = false
     }
 
@@ -979,15 +1022,26 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         placeholderContainer.backgroundColor = .clear
         view.addSubview(placeholderContainer)
 
-        placeholderWaveformIcon.translatesAutoresizingMaskIntoConstraints = false
-        if let waveformIcon = options.voiceWaveformIcon {
-            placeholderWaveformIcon.image = waveformIcon
-        } else {
-            placeholderWaveformIcon.image = UIImage(systemName: "waveform")
-            placeholderWaveformIcon.tintColor = UIColor.systemBlue
+        // The waveform sizes itself from `voiceWaveformSize`, while a host-supplied icon is
+        // aspect-fit into a fixed slot because a host image's intrinsic size is arbitrary.
+        let centerVisual = placeholderCenterVisual.view
+        centerVisual.translatesAutoresizingMaskIntoConstraints = false
+        var centerVisualConstraints: [NSLayoutConstraint] = []
+        switch placeholderCenterVisual {
+        case .icon(let icon):
+            icon.contentMode = .scaleAspectFit
+            centerVisualConstraints = [
+                icon.widthAnchor.constraint(equalToConstant: Self.placeholderWaveformIconSize),
+                icon.heightAnchor.constraint(equalToConstant: Self.placeholderWaveformIconSize),
+            ]
+        case .waveform(let waveform):
+            // Web hides the input row for two seconds to avoid Chrome capturing its startup sound.
+            // Native iOS has no equivalent browser artifact, so it deliberately starts immediately.
+            waveform.agentColor = options.voiceStyle.voiceWaveformAgentColor
+            waveform.userColor = options.voiceStyle.voiceWaveformUserColor
+            waveform.scale = options.voiceStyle.voiceWaveformSize
         }
-        placeholderWaveformIcon.contentMode = .scaleAspectFit
-        placeholderContainer.addSubview(placeholderWaveformIcon)
+        placeholderContainer.addSubview(centerVisual)
 
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.text = options.voicePlaceholderText
@@ -1015,18 +1069,16 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             placeholderContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             placeholderContainer.bottomAnchor.constraint(equalTo: controlsContainer.topAnchor),
 
-            placeholderWaveformIcon.centerXAnchor.constraint(equalTo: placeholderContainer.centerXAnchor),
-            placeholderWaveformIcon.centerYAnchor.constraint(equalTo: placeholderContainer.centerYAnchor, constant: -22),
-            placeholderWaveformIcon.widthAnchor.constraint(equalToConstant: 36),
-            placeholderWaveformIcon.heightAnchor.constraint(equalToConstant: 36),
+            centerVisual.centerXAnchor.constraint(equalTo: placeholderContainer.centerXAnchor),
+            centerVisual.centerYAnchor.constraint(equalTo: placeholderContainer.centerYAnchor, constant: -22),
 
-            placeholderLabel.topAnchor.constraint(equalTo: placeholderWaveformIcon.bottomAnchor, constant: 18),
+            placeholderLabel.topAnchor.constraint(equalTo: centerVisual.bottomAnchor, constant: 18),
             placeholderLabel.leadingAnchor.constraint(equalTo: placeholderContainer.leadingAnchor, constant: 24),
             placeholderLabel.trailingAnchor.constraint(equalTo: placeholderContainer.trailingAnchor, constant: -24),
 
             loadingContainer.centerXAnchor.constraint(equalTo: placeholderContainer.centerXAnchor),
-            // Align loading spinner with the waveform icon's center so the load-to-ready
-            // transition has no vertical jump.
+            // Align loading spinner with the waveform's center so the load-to-ready transition has
+            // no vertical jump.
             loadingContainer.centerYAnchor.constraint(equalTo: placeholderContainer.centerYAnchor, constant: -22),
             loadingContainer.leadingAnchor.constraint(greaterThanOrEqualTo: placeholderContainer.leadingAnchor, constant: 24),
             loadingContainer.trailingAnchor.constraint(lessThanOrEqualTo: placeholderContainer.trailingAnchor, constant: -24),
@@ -1034,7 +1086,29 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             loadingIndicator.centerXAnchor.constraint(equalTo: loadingContainer.centerXAnchor),
             loadingIndicator.topAnchor.constraint(equalTo: loadingContainer.topAnchor),
             loadingIndicator.bottomAnchor.constraint(equalTo: loadingContainer.bottomAnchor),
-        ])
+        ] + centerVisualConstraints)
+    }
+
+    /// Side of the square slot a host-supplied `voiceWaveformIcon` is aspect-fit into.
+    private static let placeholderWaveformIconSize: CGFloat = 36
+
+    /// The live waveform when it is the center visual, or nil when the host's static
+    /// `voiceWaveformIcon` is shown instead (level updates are meaningless then).
+    private var placeholderWaveform: VoiceWaveformView? {
+        if case .waveform(let waveform) = placeholderCenterVisual { return waveform }
+        return nil
+    }
+
+    /// Level updates stop once the renderer takes over the center of the screen, so the waveform's
+    /// display link isn't kept alive behind it.
+    private func setWaveformUserLevels(_ bands: [Float]) {
+        guard !placeholderContainer.isHidden else { return }
+        placeholderWaveform?.setUserLevels(bands)
+    }
+
+    private func setWaveformAgentLevels(_ bands: [Float]) {
+        guard !placeholderContainer.isHidden else { return }
+        placeholderWaveform?.setAgentLevels(bands)
     }
 
     private func setupErrorBanner() {
@@ -1086,7 +1160,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             backgroundColor: muteButtonColor,
             iconColor: defaultMuteButtonIconColor(for: muteButtonColor),
             muteIcon: options.muteIcon,
-            waveformIcon: nil
+            waveformIcon: nil,
+            waveformUserColor: options.voiceStyle.voiceWaveformUserColor,
+            waveformAgentColor: options.voiceStyle.voiceWaveformAgentColor
         )
     }
 
@@ -1222,6 +1298,8 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             backgroundColor: muteButtonColor,
             iconColor: defaultMuteButtonIconColor(for: muteButtonColor),
             muteIcon: options.muteIcon,
+            waveformUserColor: options.voiceStyle.voiceWaveformUserColor,
+            waveformAgentColor: options.voiceStyle.voiceWaveformAgentColor,
             layout: .compact
         )
     }
@@ -1360,23 +1438,20 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             setControlButtonsEnabled(true)
             setLoadingStateVisible(!hasReceivedInitialGreeting)
             cancelInitialGreetingFallback()
-            stopWaveformAnimation()
         case .listening:
             setLoadingStateVisible(!hasReceivedInitialGreeting)
             scheduleInitialGreetingFallbackIfNeeded()
             setControlButtonsEnabled(true)
-            stopWaveformAnimation()
         case .speaking:
             setLoadingStateVisible(!hasReceivedInitialGreeting)
             cancelInitialGreetingFallback()
             setControlButtonsEnabled(true)
-            startWaveformAnimation()
         case .ended:
             setLoadingStateVisible(false)
             cancelInitialGreetingFallback()
             latestInputAudioLevel = 0
             latestOutputAudioLevel = 0
-            stopWaveformAnimation()
+            placeholderWaveform?.resetLevels()
             muteLevelDisplay?.resetLevels()
             compactMuteLevelDisplay?.resetLevels()
             setControlButtonsEnabled(false)
@@ -1397,7 +1472,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         DispatchQueue.main.async {
             self.latestInputAudioLevel = 0
             self.latestOutputAudioLevel = 0
-            self.stopWaveformAnimation()
+            self.placeholderWaveform?.resetLevels()
             self.muteLevelDisplay?.resetLevels()
             self.compactMuteLevelDisplay?.resetLevels()
             self.shutdownVoiceSessionIfNeeded()
@@ -1507,25 +1582,6 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         }
     }
 
-    private func startWaveformAnimation() {
-        // A customer-supplied waveform is rendered as-provided, so it is not animated.
-        guard options.voiceWaveformIcon == nil else { return }
-        guard !placeholderContainer.isHidden else { return }
-        guard placeholderWaveformIcon.layer.animation(forKey: "pulse") == nil else { return }
-        let anim = CABasicAnimation(keyPath: "transform.scale")
-        anim.fromValue = 1.0
-        anim.toValue = 1.06
-        anim.duration = 0.9
-        anim.autoreverses = true
-        anim.repeatCount = .infinity
-        anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        placeholderWaveformIcon.layer.add(anim, forKey: "pulse")
-    }
-
-    private func stopWaveformAnimation() {
-        placeholderWaveformIcon.layer.removeAnimation(forKey: "pulse")
-    }
-
     private func markInitialGreetingReceivedIfNeeded() {
         guard !hasReceivedInitialGreeting else { return }
         hasReceivedInitialGreeting = true
@@ -1549,10 +1605,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     private func setLoadingStateVisible(_ visible: Bool) {
         loadingContainer.isHidden = !visible
-        placeholderWaveformIcon.isHidden = visible
+        placeholderCenterVisual.view.isHidden = visible
         placeholderLabel.isHidden = visible
         if visible {
-            stopWaveformAnimation()
+            placeholderWaveform?.resetLevels()
             loadingIndicator.startAnimating()
         } else {
             loadingIndicator.stopAnimating()
@@ -1567,6 +1623,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             latestInputAudioLevel = 0
             muteLevelDisplay?.setInputLevel(0)
             compactMuteLevelDisplay?.setInputLevel(0)
+            setWaveformUserLevels(AudioSpectrumAnalyser.restingLevels())
         } else {
             voiceSession?.resumeListening()
         }

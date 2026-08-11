@@ -35,6 +35,10 @@ final class AudioCaptureSession {
     /// Callers must dispatch to their target queue before touching thread-confined state.
     var onInputLevel: ((Float) -> Void)?
 
+    /// Emits the input waveform bands from the audio tap thread, and resting levels from pause
+    /// transitions. Same threading contract as `onInputLevel`.
+    var onInputBands: (([Float]) -> Void)?
+
     /// Bytes per sample for the mono linear16 (signed 16-bit) transport format.
     private static let linear16BytesPerSample = 2
 
@@ -42,6 +46,12 @@ final class AudioCaptureSession {
     /// converted-audio emit path and the echo-gate silence path so both stay equal-length.
     static func linear16ByteCount(frameCount: AVAudioFrameCount) -> Int {
         Int(frameCount) * linear16BytesPerSample
+    }
+
+    /// Requested input tap size for the waveform sampling cadence. AVAudioEngine may coalesce tap
+    /// callbacks, but this keeps the request at the Web-compatible 50 Hz target update rate.
+    static func inputTapBufferSize(sampleRate: Double, duration: Double) -> AVAudioFrameCount {
+        AVAudioFrameCount(max(240, Int((sampleRate * duration).rounded())))
     }
 
     /// Decides how a captured buffer is handled while capture is suppressed. Interruption wins and
@@ -88,6 +98,7 @@ final class AudioCaptureSession {
     private var isRunning = false
     // Accessed only from the audio tap callback thread.
     private var lastTapSpeakingState = false
+    private let spectrumAnalyser = AudioSpectrumAnalyser()
 
     init(disableInterruptions: Bool, sampleRate: Double, inputTapDuration: Double) {
         self.disableInterruptions = disableInterruptions
@@ -108,8 +119,9 @@ final class AudioCaptureSession {
         let converter = AVAudioConverter(from: inputFormat, to: convertFormat)
         self.converter = converter
 
-        let inputTapBufferSize = AVAudioFrameCount(
-            max(240, Int(inputFormat.sampleRate * inputTapDuration))
+        let inputTapBufferSize = Self.inputTapBufferSize(
+            sampleRate: inputFormat.sampleRate,
+            duration: inputTapDuration
         )
         inputNode.installTap(
             onBus: 0,
@@ -131,7 +143,7 @@ final class AudioCaptureSession {
             )
             if policy == .drop {
                 // Audio-session interruption: the session is suspended, so emit nothing (status quo).
-                self.onInputLevel?(0)
+                self.emitSuppressedInputLevels(resetAnalyser: true)
                 return
             }
 
@@ -140,12 +152,16 @@ final class AudioCaptureSession {
             // silence is exactly as long as the audio it replaces and the server's byte-counted
             // AudioIn clock stays aligned. See CH-633.
             let emitSilence: Bool
+            // RMS of a forwarded buffer, held back so it is emitted next to the bands computed from the
+            // same buffer below. Emitting it here instead would leave the mute pill ahead of the
+            // waveform row on any frame that fails to convert. Nil whenever nothing is forwarded.
+            var forwardedInputRMS: Float?
             if policy == .silence {
                 // User mute or speaking-mute: keep the timeline advancing with silence. The real mic
                 // bytes are never transmitted while muted.
                 self.resetEchoGateState()
                 self.lastTapSpeakingState = stateSnapshot.isSpeakingState
-                self.onInputLevel?(0)
+                self.emitSuppressedInputLevels(resetAnalyser: false)
                 emitSilence = true
             } else {
                 if stateSnapshot.isSpeakingState != self.lastTapSpeakingState {
@@ -164,7 +180,11 @@ final class AudioCaptureSession {
                     self.resetEchoGateState()
                     emitSilence = false
                 }
-                self.onInputLevel?(emitSilence ? 0 : rms)
+                if emitSilence {
+                    self.emitSuppressedInputLevels(resetAnalyser: false)
+                } else {
+                    forwardedInputRMS = rms
+                }
             }
 
             guard let convertedBuffer = AVAudioPCMBuffer(
@@ -186,10 +206,27 @@ final class AudioCaptureSession {
             // Size both the silence and the captured payload from the converter's actual output so
             // they are always identical length.
             let byteCount = Self.linear16ByteCount(frameCount: convertedBuffer.frameLength)
+            guard let channelData = convertedBuffer.int16ChannelData else { return }
             if emitSilence {
                 self.onAudioData?(Data(count: byteCount))
-            } else if let channelData = convertedBuffer.int16ChannelData {
+                // Web keeps its AnalyserNode connected while read() returns muted zeros. Continue
+                // analysing the real mic here for the same unmute behavior; real bytes are still
+                // replaced by silence on the wire and no live bands are reported while suppressed.
+                _ = self.spectrumAnalyser.analyse(
+                    samples: channelData[0],
+                    count: Int(convertedBuffer.frameLength)
+                )
+            } else {
                 self.onAudioData?(Data(bytes: channelData[0], count: byteCount))
+                if let forwardedInputRMS {
+                    self.onInputLevel?(forwardedInputRMS)
+                }
+                // Bands come from the converted buffer so both waveform rows are analysed at the
+                // SDK's voice sample rate, rather than the input row following the mic hardware's.
+                self.onInputBands?(self.spectrumAnalyser.analyse(
+                    samples: channelData[0],
+                    count: Int(convertedBuffer.frameLength)
+                ))
             }
         }
     }
@@ -225,7 +262,10 @@ final class AudioCaptureSession {
             _isInterruptionPaused = true
             debugLog("SVP capture paused for audio-session interruption.")
         }
+        // The tap thread owns the analyser, so only the reported levels are zeroed here; the tap
+        // clears the smoothing itself on its next suppressed buffer.
         onInputLevel?(0)
+        onInputBands?(AudioSpectrumAnalyser.restingLevels())
     }
 
     func resumeFromInterruption() {
@@ -258,6 +298,16 @@ final class AudioCaptureSession {
         }
     }
 
+    /// Reports silence on both level channels. Audio-session interruptions reset because there is
+    /// no audio to analyse; mute and echo suppression keep analyser history in sync with Web Audio.
+    private func emitSuppressedInputLevels(resetAnalyser: Bool) {
+        if resetAnalyser {
+            spectrumAnalyser.reset()
+        }
+        onInputLevel?(0)
+        onInputBands?(AudioSpectrumAnalyser.restingLevels())
+    }
+
     private func captureStateSnapshot() -> CaptureStateSnapshot {
         listeningPauseQueue.sync {
             CaptureStateSnapshot(
@@ -279,6 +329,7 @@ final class AudioCaptureSession {
         }
         if !wasPaused, isPaused {
             onInputLevel?(0)
+            onInputBands?(AudioSpectrumAnalyser.restingLevels())
         }
     }
 

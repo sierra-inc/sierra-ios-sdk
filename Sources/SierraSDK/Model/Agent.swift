@@ -28,6 +28,8 @@ public enum AgentAPIHost: String {
     case prod = "prod"
     case eu = "eu"
     case sg = "sg"
+    case jp = "jp"
+    case au = "au"
     case staging = "staging"
     case local = "local"
 
@@ -39,6 +41,10 @@ public enum AgentAPIHost: String {
             return "https://eu.api.sierra.chat"
         case .sg:
             return "https://sg.api.sierra.chat"
+        case .jp:
+            return "https://jp.api.sierra.chat"
+        case .au:
+            return "https://au.api.sierra.chat"
         case .staging:
             return "https://api-staging.sierra.chat"
         case .local:
@@ -54,6 +60,10 @@ public enum AgentAPIHost: String {
             return "https://eu.sierra.chat"
         case .sg:
             return "https://sg.sierra.chat"
+        case .jp:
+            return "https://jp.sierra.chat"
+        case .au:
+            return "https://au.sierra.chat"
         case .staging:
             return "https://staging.sierra.chat"
         case .local:

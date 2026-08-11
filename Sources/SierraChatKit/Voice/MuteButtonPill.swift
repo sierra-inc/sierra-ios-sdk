@@ -15,6 +15,8 @@ public final class MuteButtonPill: UIButton, VoiceMuteLevelDisplaying {
     private let iconColor: UIColor
     private let muteIcon: UIImage?
     private let waveformIcon: UIImage?
+    private let waveformUserColor: UIColor
+    private let waveformAgentColor: UIColor
     private let title: String
     private let layout: VoiceControlButtonLayout
     private let iconContainer = UIView()
@@ -26,12 +28,16 @@ public final class MuteButtonPill: UIButton, VoiceMuteLevelDisplaying {
         iconColor: UIColor,
         muteIcon: UIImage?,
         waveformIcon: UIImage? = nil,
+        waveformUserColor: UIColor = DEFAULT_VOICE_WAVEFORM_USER_COLOR,
+        waveformAgentColor: UIColor = DEFAULT_VOICE_WAVEFORM_AGENT_COLOR,
         title: String = "Mute",
         layout: VoiceControlButtonLayout = .pill
     ) {
         self.iconColor = iconColor
         self.muteIcon = muteIcon
         self.waveformIcon = waveformIcon ?? UIImage(named: "WaveformMic", in: .module, compatibleWith: nil)
+        self.waveformUserColor = waveformUserColor
+        self.waveformAgentColor = waveformAgentColor
         self.title = title
         self.layout = layout
         super.init(frame: .zero)
@@ -59,6 +65,8 @@ public final class MuteButtonPill: UIButton, VoiceMuteLevelDisplaying {
         let waveform = VoiceAudioLevelView(micImage: waveformIcon)
         waveform.translatesAutoresizingMaskIntoConstraints = false
         waveform.micColor = iconColor
+        waveform.inputColor = waveformUserColor
+        waveform.outputColor = waveformAgentColor
         iconContainer.addSubview(waveform)
         NSLayoutConstraint.activate([
             waveform.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
