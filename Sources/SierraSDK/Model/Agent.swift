@@ -9,14 +9,27 @@ public struct AgentConfig: Equatable {
     public let target: String?
     public var apiHost: AgentAPIHost = .prod
     public var persistence: PersistenceMode = .memory
-    /// Headless API token required for SVP voice connections. Not needed for chat.
+    /// Headless API token used for SVP voice connections. Set either this or `oauthAccessToken`,
+    /// never both. Not needed for chat.
     public var headlessAPIToken: String?
 
-    public init(token: String, target: String? = nil, persistence: PersistenceMode = .memory, headlessAPIToken: String? = nil) {
+    /// Short-lived OAuth access token with the Voice scope used for SVP voice connections. Set
+    /// either this or `headlessAPIToken`, never both. Have your backend exchange the OAuth client
+    /// configured in Agent Studio; do not embed its secret.
+    public var oauthAccessToken: String?
+
+    public init(
+        token: String,
+        target: String? = nil,
+        persistence: PersistenceMode = .memory,
+        headlessAPIToken: String? = nil,
+        oauthAccessToken: String? = nil
+    ) {
         self.token = token
         self.target = target
         self.persistence = persistence
         self.headlessAPIToken = headlessAPIToken
+        self.oauthAccessToken = oauthAccessToken
     }
 
     var url: String {

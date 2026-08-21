@@ -556,6 +556,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private var voiceSession: VoiceSessionManager?
     private var secretRefreshOrchestrator: SecretRefreshOrchestrator?
     private var renderer: MobileRendererView?
+    private var rendererInlineConstraints: [NSLayoutConstraint] = []
+    private var rendererFullscreenConstraints: [NSLayoutConstraint] = []
+    private var isRendererFullscreen = false
     private var hasShownFirstAttachment = false
     private var rendererFailed = false
     private var hasAttemptedRendererLoad = false
@@ -668,6 +671,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     public override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        if isRendererFullscreen {
+            renderer?.requestInlineDisplayMode()
+            setRendererFullscreen(false)
+        }
         if let previousNavigationBarHidden, let navigationController {
             navigationController.setNavigationBarHidden(previousNavigationBarHidden, animated: animated)
             self.previousNavigationBarHidden = nil
@@ -936,17 +943,42 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         let rendererView = MobileRendererView(agent: agent, options: options)
         rendererView.delegate = self
         rendererView.isHidden = true
+        rendererView.backgroundColor = options.voiceStyle.backgroundColor
         self.renderer = rendererView
 
         rendererView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(rendererView)
 
-        NSLayoutConstraint.activate([
+        rendererInlineConstraints = [
             rendererView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            rendererView.bottomAnchor.constraint(equalTo: controlsContainer.topAnchor),
+        ]
+        // Fullscreen stays within the safe area: seat maps and similar embedded UI
+        // content is task UI, which per platform convention never extends
+        // under the notch or home indicator (that treatment is for media).
+        rendererFullscreenConstraints = [
+            rendererView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            rendererView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate([
             rendererView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             rendererView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            rendererView.bottomAnchor.constraint(equalTo: controlsContainer.topAnchor),
-        ])
+        ] + rendererInlineConstraints)
+    }
+
+    private func setRendererFullscreen(_ fullscreen: Bool) {
+        guard fullscreen != isRendererFullscreen, let renderer else { return }
+        isRendererFullscreen = fullscreen
+
+        if fullscreen {
+            NSLayoutConstraint.deactivate(rendererInlineConstraints)
+            NSLayoutConstraint.activate(rendererFullscreenConstraints)
+            view.bringSubviewToFront(renderer)
+        } else {
+            NSLayoutConstraint.deactivate(rendererFullscreenConstraints)
+            NSLayoutConstraint.activate(rendererInlineConstraints)
+        }
+        view.layoutIfNeeded()
     }
 
     private func ensureMobileRendererLoaded() {
@@ -983,10 +1015,17 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         // Layout is handled by the WebView's scroll view
     }
 
+    public func mobileRenderer(_ renderer: MobileRendererView, didChangeDisplayMode displayMode: MobileRendererDisplayMode) {
+        DispatchQueue.main.async {
+            self.setRendererFullscreen(displayMode == .fullscreen)
+        }
+    }
+
     public func mobileRenderer(_ renderer: MobileRendererView, didEncounterError error: Error) {
         debugLog("AgentVoiceController: renderer error: \(error)")
         rendererFailed = true
         DispatchQueue.main.async {
+            self.setRendererFullscreen(false)
             self.renderer?.isHidden = true
             self.placeholderContainer.isHidden = false
         }
