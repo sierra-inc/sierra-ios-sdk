@@ -13,6 +13,7 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertNil(config.target)
         XCTAssertEqual(config.persistence, .memory)
         XCTAssertNil(config.headlessAPIToken)
+        XCTAssertNil(config.oauthAccessToken)
     }
 
     func testRegionalAgentAPIHosts() {
@@ -20,6 +21,32 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(AgentAPIHost.jp.embedBaseURL, "https://jp.sierra.chat")
         XCTAssertEqual(AgentAPIHost.au.apiBaseURL, "https://au.api.sierra.chat")
         XCTAssertEqual(AgentAPIHost.au.embedBaseURL, "https://au.sierra.chat")
+    }
+
+    func testSVPTransportUsesOAuthAuthorizationHeadersBeforeHeadlessToken() throws {
+        let config = AgentConfig(
+            token: "test-token",
+            headlessAPIToken: "headless-token",
+            oauthAccessToken: "oauth-token"
+        )
+        let transport = SVPTransport(config: config)
+
+        let request = transport.makeWebSocketRequest(url: try XCTUnwrap(URL(string: "wss://example.com")))
+
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer oauth-token")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Sierra-Token-Version"), "2")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol"))
+    }
+
+    func testSVPTransportFallsBackToHeadlessToken() throws {
+        let config = AgentConfig(token: "test-token", headlessAPIToken: "headless-token")
+        let transport = SVPTransport(config: config)
+
+        let request = transport.makeWebSocketRequest(url: try XCTUnwrap(URL(string: "wss://example.com")))
+
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer headless-token")
+        XCTAssertNil(request.value(forHTTPHeaderField: "X-Sierra-Token-Version"))
+        XCTAssertNil(request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol"))
     }
 
     func testAgentVoiceChatCoordinatorRestoresPersistedConversationState() throws {
