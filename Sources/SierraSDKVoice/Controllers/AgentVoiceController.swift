@@ -97,6 +97,13 @@ public struct AgentVoiceStyle {
     /// outside `0` to `3` are clamped, so a bad value can't break the voice screen layout.
     public var voiceWaveformSize: CGFloat
 
+    /// Font for the placeholder shown below the voice waveform.
+    public var voicePlaceholderFont: UIFont
+
+    /// Spacing between the voice waveform and placeholder text, in points.
+    /// Negative values are treated as zero.
+    public var voicePlaceholderSpacing: CGFloat
+
     public init(
         backgroundColor: UIColor = .systemBackground,
         titleBarColor: UIColor = .systemBackground,
@@ -114,7 +121,9 @@ public struct AgentVoiceStyle {
         textComposerSendButtonTintColor: UIColor? = nil,
         voiceWaveformAgentColor: UIColor = DEFAULT_VOICE_WAVEFORM_AGENT_COLOR,
         voiceWaveformUserColor: UIColor = DEFAULT_VOICE_WAVEFORM_USER_COLOR,
-        voiceWaveformSize: CGFloat = DEFAULT_VOICE_WAVEFORM_SCALE
+        voiceWaveformSize: CGFloat = DEFAULT_VOICE_WAVEFORM_SCALE,
+        voicePlaceholderFont: UIFont = .systemFont(ofSize: 15, weight: .regular),
+        voicePlaceholderSpacing: CGFloat = 18
     ) {
         self.backgroundColor = backgroundColor
         self.titleBarColor = titleBarColor
@@ -133,6 +142,8 @@ public struct AgentVoiceStyle {
         self.voiceWaveformAgentColor = voiceWaveformAgentColor
         self.voiceWaveformUserColor = voiceWaveformUserColor
         self.voiceWaveformSize = voiceWaveformSize
+        self.voicePlaceholderFont = voicePlaceholderFont
+        self.voicePlaceholderSpacing = voicePlaceholderSpacing
     }
 
     @available(*, deprecated, message: "Use messageColors and messageTypography instead.")
@@ -556,6 +567,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private var voiceSession: VoiceSessionManager?
     private var secretRefreshOrchestrator: SecretRefreshOrchestrator?
     private var renderer: MobileRendererView?
+    private var rendererInlineConstraints: [NSLayoutConstraint] = []
+    private var rendererFullscreenConstraints: [NSLayoutConstraint] = []
+    private var isRendererFullscreen = false
     private var hasShownFirstAttachment = false
     private var rendererFailed = false
     private var hasAttemptedRendererLoad = false
@@ -668,6 +682,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     public override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        if isRendererFullscreen {
+            renderer?.requestInlineDisplayMode()
+            setRendererFullscreen(false)
+        }
         if let previousNavigationBarHidden, let navigationController {
             navigationController.setNavigationBarHidden(previousNavigationBarHidden, animated: animated)
             self.previousNavigationBarHidden = nil
@@ -936,17 +954,42 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         let rendererView = MobileRendererView(agent: agent, options: options)
         rendererView.delegate = self
         rendererView.isHidden = true
+        rendererView.backgroundColor = options.voiceStyle.backgroundColor
         self.renderer = rendererView
 
         rendererView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(rendererView)
 
-        NSLayoutConstraint.activate([
+        rendererInlineConstraints = [
             rendererView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            rendererView.bottomAnchor.constraint(equalTo: controlsContainer.topAnchor),
+        ]
+        // Fullscreen stays within the safe area: seat maps and similar embedded UI
+        // content is task UI, which per platform convention never extends
+        // under the notch or home indicator (that treatment is for media).
+        rendererFullscreenConstraints = [
+            rendererView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            rendererView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate([
             rendererView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             rendererView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            rendererView.bottomAnchor.constraint(equalTo: controlsContainer.topAnchor),
-        ])
+        ] + rendererInlineConstraints)
+    }
+
+    private func setRendererFullscreen(_ fullscreen: Bool) {
+        guard fullscreen != isRendererFullscreen, let renderer else { return }
+        isRendererFullscreen = fullscreen
+
+        if fullscreen {
+            NSLayoutConstraint.deactivate(rendererInlineConstraints)
+            NSLayoutConstraint.activate(rendererFullscreenConstraints)
+            view.bringSubviewToFront(renderer)
+        } else {
+            NSLayoutConstraint.deactivate(rendererFullscreenConstraints)
+            NSLayoutConstraint.activate(rendererInlineConstraints)
+        }
+        view.layoutIfNeeded()
     }
 
     private func ensureMobileRendererLoaded() {
@@ -983,10 +1026,17 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         // Layout is handled by the WebView's scroll view
     }
 
+    public func mobileRenderer(_ renderer: MobileRendererView, didChangeDisplayMode displayMode: MobileRendererDisplayMode) {
+        DispatchQueue.main.async {
+            self.setRendererFullscreen(displayMode == .fullscreen)
+        }
+    }
+
     public func mobileRenderer(_ renderer: MobileRendererView, didEncounterError error: Error) {
         debugLog("AgentVoiceController: renderer error: \(error)")
         rendererFailed = true
         DispatchQueue.main.async {
+            self.setRendererFullscreen(false)
             self.renderer?.isHidden = true
             self.placeholderContainer.isHidden = false
         }
@@ -1050,7 +1100,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
                 ? UIColor(red: 238 / 255, green: 238 / 255, blue: 238 / 255, alpha: 184 / 255)
                 : UIColor(red: 17 / 255, green: 17 / 255, blue: 17 / 255, alpha: 184 / 255)
         }
-        placeholderLabel.font = .systemFont(ofSize: 15, weight: .regular)
+        placeholderLabel.font = options.voiceStyle.voicePlaceholderFont
         placeholderLabel.textAlignment = .center
         placeholderContainer.addSubview(placeholderLabel)
 
@@ -1072,7 +1122,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             centerVisual.centerXAnchor.constraint(equalTo: placeholderContainer.centerXAnchor),
             centerVisual.centerYAnchor.constraint(equalTo: placeholderContainer.centerYAnchor, constant: -22),
 
-            placeholderLabel.topAnchor.constraint(equalTo: centerVisual.bottomAnchor, constant: 18),
+            placeholderLabel.topAnchor.constraint(
+                equalTo: centerVisual.bottomAnchor,
+                constant: max(0, options.voiceStyle.voicePlaceholderSpacing)
+            ),
             placeholderLabel.leadingAnchor.constraint(equalTo: placeholderContainer.leadingAnchor, constant: 24),
             placeholderLabel.trailingAnchor.constraint(equalTo: placeholderContainer.trailingAnchor, constant: -24),
 
