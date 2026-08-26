@@ -17,6 +17,12 @@ private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// Display modes the mobile renderer can request for embedded content.
+public enum MobileRendererDisplayMode: String {
+    case inline
+    case fullscreen
+}
+
 /// Callbacks for interactive content events (e.g., user taps a flight card).
 public protocol MobileRendererDelegate: AnyObject {
     /// Called when a rendered component sends a message via the web bundle's
@@ -33,11 +39,15 @@ public protocol MobileRendererDelegate: AnyObject {
     /// Called when the user taps a link in a rendered attachment that would otherwise be opened
     /// externally. The host may route the URL in-app or fall back to the system handler.
     func mobileRenderer(_ renderer: MobileRendererView, didClickLink url: URL)
+
+    /// Called when embedded content enters or exits fullscreen presentation.
+    func mobileRenderer(_ renderer: MobileRendererView, didChangeDisplayMode displayMode: MobileRendererDisplayMode)
 }
 
 public extension MobileRendererDelegate {
     func mobileRenderer(_ renderer: MobileRendererView, didEncounterError error: Error) {}
     func mobileRenderer(_ renderer: MobileRendererView, didClickLink url: URL) {}
+    func mobileRenderer(_ renderer: MobileRendererView, didChangeDisplayMode displayMode: MobileRendererDisplayMode) {}
 }
 
 /// A UIView that renders agent web bundle content pushed from SVP.
@@ -47,15 +57,6 @@ public extension MobileRendererDelegate {
 /// booking confirmations, etc.) by pushing JSON data directly via SVP -- no
 /// conversation state, no chat infrastructure.
 ///
-/// Usage:
-/// ```swift
-/// let renderer = MobileRendererView(agent: agent)
-/// renderer.delegate = self
-/// view.addSubview(renderer)
-///
-/// // When SVP delivers attachment JSON:
-/// renderer.pushAttachments(attachmentDicts)
-/// ```
 public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHandler {
     private var webView: WKWebView!
     private var isReady = false
@@ -66,13 +67,30 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     private var isConversationEventEvaluationInFlight = false
     private let agent: Agent
     private let options: AgentVoiceControllerOptions
+    private let supportsFullscreen: Bool
     private var scriptMessageHandler: WeakScriptMessageHandler?
 
     public weak var delegate: MobileRendererDelegate?
 
+    @available(*, deprecated, message: "Use AgentVoiceController instead.")
     public init(agent: Agent, options: AgentVoiceControllerOptions = AgentVoiceControllerOptions(name: "Conversation")) {
         self.agent = agent
         self.options = options
+        supportsFullscreen = false
+        super.init(frame: .zero)
+        setupWebView()
+    }
+
+    init(
+        agent: Agent,
+        options: AgentVoiceControllerOptions,
+        delegate: MobileRendererDelegate,
+        supportsFullscreen: Bool
+    ) {
+        self.agent = agent
+        self.options = options
+        self.delegate = delegate
+        self.supportsFullscreen = supportsFullscreen
         super.init(frame: .zero)
         setupWebView()
     }
@@ -96,6 +114,11 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         webView.isOpaque = false
         webView.scrollView.isScrollEnabled = true
         webView.scrollView.keyboardDismissMode = .interactive
+        // Automatic inset adjustment shifts the page's layout viewport
+        // (including the fixed fullscreen dialog) whenever the WebView
+        // frame nears the screen edges. The renderer is always laid out within
+        // the safe area, so there is nothing for WebKit to compensate for.
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.navigationDelegate = self
         webView.customUserAgent = getUserAgent(isWebView: true)
 
@@ -130,27 +153,11 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
             return
         }
 
-        var queryItems: [URLQueryItem] = []
-        if let target = agent.config.target, !target.isEmpty {
-            queryItems.append(URLQueryItem(name: "target", value: target))
-        }
-        let backgroundColorHex =
-            options.voiceStyle.rendererBackgroundColor?.toHex() ??
-            options.voiceStyle.backgroundColor.toHex()
-        queryItems.append(URLQueryItem(name: "supportsLinkClick", value: "true"))
-        debugLog(
-            "MobileRenderer: Preparing renderer URL base=\(agent.config.conversationRendererURL), target=\(agent.config.target ?? "nil"), backgroundColor=\(backgroundColorHex ?? "nil")"
+        let queryItems = Self.rendererQueryItems(
+            agent: agent,
+            options: options,
+            supportsFullscreen: supportsFullscreen
         )
-        if let backgroundColorHex {
-            queryItems.append(URLQueryItem(name: "backgroundColor", value: backgroundColorHex))
-        }
-        let messageStyleJSON = options.voiceStyle.messageStyleJSONString()
-        if !messageStyleJSON.isEmpty {
-            queryItems.append(URLQueryItem(name: "messageStyle", value: messageStyleJSON))
-        }
-        if options.enableTextInput, options.enableLiveTranscription {
-            queryItems.append(URLQueryItem(name: "enableLiveTranscription", value: "true"))
-        }
 
         if !queryItems.isEmpty {
             urlComponents.queryItems = queryItems
@@ -164,6 +171,38 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         } else {
             debugLog("MobileRenderer: Failed to resolve renderer URL from components: \(urlComponents)")
         }
+    }
+
+    static func rendererQueryItems(
+        agent: Agent,
+        options: AgentVoiceControllerOptions,
+        supportsFullscreen: Bool
+    ) -> [URLQueryItem] {
+        var queryItems: [URLQueryItem] = []
+        if let target = agent.config.target, !target.isEmpty {
+            queryItems.append(URLQueryItem(name: "target", value: target))
+        }
+        let backgroundColorHex =
+            options.voiceStyle.rendererBackgroundColor?.toHex() ??
+            options.voiceStyle.backgroundColor.toHex()
+        queryItems.append(URLQueryItem(name: "supportsLinkClick", value: "true"))
+        if supportsFullscreen {
+            queryItems.append(URLQueryItem(name: "supportsFullscreen", value: "true"))
+        }
+        debugLog(
+            "MobileRenderer: Preparing renderer URL base=\(agent.config.conversationRendererURL), target=\(agent.config.target ?? "nil"), backgroundColor=\(backgroundColorHex ?? "nil")"
+        )
+        if let backgroundColorHex {
+            queryItems.append(URLQueryItem(name: "backgroundColor", value: backgroundColorHex))
+        }
+        let messageStyleJSON = options.voiceStyle.messageStyleJSONString()
+        if !messageStyleJSON.isEmpty {
+            queryItems.append(URLQueryItem(name: "messageStyle", value: messageStyleJSON))
+        }
+        if options.enableTextInput, options.enableLiveTranscription {
+            queryItems.append(URLQueryItem(name: "enableLiveTranscription", value: "true"))
+        }
+        return queryItems
     }
 
     // MARK: - Public API
@@ -216,6 +255,11 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     @available(*, deprecated, message: "The mobile renderer no longer supports native clear-conversation control messages.")
     public func clearConversation() {
         debugLog("MobileRenderer: clearConversation is deprecated and ignored")
+    }
+
+    /// Asks the active fullscreen content, if any, to return inline.
+    public func requestInlineDisplayMode() {
+        webView.evaluateJavaScript("window.sierraMobile?.requestInlineDisplayMode?.()")
     }
 
     // MARK: - JS Bridge
@@ -339,7 +383,8 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     // MARK: - WKScriptMessageHandler
 
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any],
+        guard message.frameInfo.isMainFrame,
+              let body = message.body as? [String: Any],
               let type = body["type"] as? String else { return }
 
         switch type {
@@ -373,6 +418,12 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         case "onLinkClick":
             if let urlString = body["url"] as? String, let url = URL(string: urlString) {
                 delegate?.mobileRenderer(self, didClickLink: url)
+            }
+
+        case "onDisplayModeChanged":
+            if let rawDisplayMode = body["displayMode"] as? String,
+               let displayMode = MobileRendererDisplayMode(rawValue: rawDisplayMode) {
+                delegate?.mobileRenderer(self, didChangeDisplayMode: displayMode)
             }
 
         default:

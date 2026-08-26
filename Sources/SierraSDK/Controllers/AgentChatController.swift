@@ -183,10 +183,10 @@ public struct AgentChatControllerOptions {
     /// Controls when confirmation is shown when `confirmEndConversation` is true.
     public var confirmEndConversationMode: EndConversationConfirmationMode = .always
 
-    /// If set to true, an end conversation button is shown in the chat footer (above the input)
-    /// while the user is waiting for or speaking with a live agent. While waiting, the agent's
-    /// transfer waiting message takes precedence when the agent has it enabled. Only effective
-    /// when `canEndConversation` is true.
+    /// If set to true, an end conversation button is shown in the input area, below the transcript
+    /// divider, while the user is waiting for or speaking with a live agent. While waiting, the
+    /// agent's transfer waiting message takes precedence when the agent has it enabled. Only
+    /// effective when `canEndConversation` is true.
     public var footerEndConversationButton: Bool = false;
 
     /// If set to true, indicates the app uses a custom action bar and the SDK should not show
@@ -245,18 +245,25 @@ public struct AgentChatControllerOptions {
     /// value is used.
     public var messageLabelPlacement: MessageLabelPlacement = .default
 
-    /// Explicitly set whether or not to auto-detect locale-specific chat strings and text direction
-    /// from the conversation locale.
+    /// Whether chat interface strings (button labels, tooltips, etc.) and text direction are
+    /// automatically localized from the conversation locale at the start of the conversation.
+    /// When nil and useConfiguredChatStrings is true, the server-configured value is used.
     public var autoDetectChatStrings: Bool?
 
-    /// Explicitly set the text direction of the chat window.
+    /// Whether chat interface strings (button labels, tooltips, etc.) and text direction are
+    /// automatically updated when the agent changes the conversation locale mid-conversation.
+    /// When nil and useConfiguredChatStrings is true, the server-configured value is used.
+    public var autoUpdateChatStrings: Bool?
+
+    /// Explicitly set the text direction of the chat window, taking precedence over
+    /// autoDetectChatStrings and autoUpdateChatStrings:
     /// - `.ltr`: Forces the chat window to use a left-to-right language layout.
     /// - `.rtl`: Forces the chat window to use a right-to-left language layout.
-    /// - `.auto`: Text direction is automatically configured from the conversation locale.
-    /// When nil, automatically determined from locale if auto-detection is active --
-    /// either via `autoDetectChatStrings` or the server's Agent Studio configuration
-    /// when `useConfiguredChatStrings` is true. Otherwise falls back to the server
-    /// value when `useConfiguredChatStrings` is true, or left-to-right.
+    /// - `.auto`: Text direction automatically follows the conversation locale.
+    /// When nil, text direction follows the conversation locale if autoDetectChatStrings is
+    /// active or once autoUpdateChatStrings applies a mid-conversation locale change.
+    /// Otherwise, follows the Agent Studio "Text direction" setting if
+    /// useConfiguredChatStrings is true; otherwise defaults to left-to-right.
     public var textDirection: TextDirection?
 
     /// Menu label for the conversation transcript saving item.
@@ -338,7 +345,7 @@ private extension AgentChatControllerOptions {
     static let defaults = AgentChatControllerOptions(name: "")
 
     var shouldOmitDefaultChatStrings: Bool {
-        autoDetectChatStrings == true || useConfiguredChatStrings
+        autoDetectChatStrings == true || autoUpdateChatStrings == true || useConfiguredChatStrings
     }
 
     var hasCustomGreetingMessage: Bool {
@@ -517,6 +524,15 @@ extension AgentChatControllerOptions {
                 URLQueryItem(
                     name: "autoDetectChatStrings",
                     value: autoDetectChatStrings ? "true" : "false"
+                )
+            )
+        }
+
+        if let autoUpdateChatStrings {
+            queryItems.append(
+                URLQueryItem(
+                    name: "autoUpdateChatStrings",
+                    value: autoUpdateChatStrings ? "true" : "false"
                 )
             )
         }

@@ -6,6 +6,14 @@ import XCTest
 @testable import SierraSDKVoice
 
 final class SierraSDKTests: XCTestCase {
+    func testAgentVoiceControllerOptionsCompactControlsAreOptIn() {
+        var options = AgentVoiceControllerOptions(name: "Voice")
+
+        XCTAssertFalse(options.useCompactControls)
+        options.useCompactControls = true
+        XCTAssertTrue(options.useCompactControls)
+    }
+
     func testAgentConfigDefaults() {
         let config = AgentConfig(token: "test-token")
 
@@ -13,6 +21,7 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertNil(config.target)
         XCTAssertEqual(config.persistence, .memory)
         XCTAssertNil(config.headlessAPIToken)
+        XCTAssertNil(config.oauthAccessToken)
     }
 
     func testRegionalAgentAPIHosts() {
@@ -20,6 +29,52 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(AgentAPIHost.jp.embedBaseURL, "https://jp.sierra.chat")
         XCTAssertEqual(AgentAPIHost.au.apiBaseURL, "https://au.api.sierra.chat")
         XCTAssertEqual(AgentAPIHost.au.embedBaseURL, "https://au.sierra.chat")
+    }
+
+    @MainActor
+    func testMobileRendererAdvertisesFullscreenOnlyForSupportedHost() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        let options = AgentVoiceControllerOptions(name: "Voice")
+
+        let standaloneItems = MobileRendererView.rendererQueryItems(
+            agent: agent,
+            options: options,
+            supportsFullscreen: false
+        )
+        let hostedItems = MobileRendererView.rendererQueryItems(
+            agent: agent,
+            options: options,
+            supportsFullscreen: true
+        )
+
+        XCTAssertFalse(standaloneItems.contains { $0.name == "supportsFullscreen" })
+        XCTAssertEqual(hostedItems.first { $0.name == "supportsFullscreen" }?.value, "true")
+    }
+
+    func testSVPTransportUsesOAuthAuthorizationHeadersBeforeHeadlessToken() throws {
+        let config = AgentConfig(
+            token: "test-token",
+            headlessAPIToken: "headless-token",
+            oauthAccessToken: "oauth-token"
+        )
+        let transport = SVPTransport(config: config)
+
+        let request = transport.makeWebSocketRequest(url: try XCTUnwrap(URL(string: "wss://example.com")))
+
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer oauth-token")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Sierra-Token-Version"), "2")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol"))
+    }
+
+    func testSVPTransportFallsBackToHeadlessToken() throws {
+        let config = AgentConfig(token: "test-token", headlessAPIToken: "headless-token")
+        let transport = SVPTransport(config: config)
+
+        let request = transport.makeWebSocketRequest(url: try XCTUnwrap(URL(string: "wss://example.com")))
+
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer headless-token")
+        XCTAssertNil(request.value(forHTTPHeaderField: "X-Sierra-Token-Version"))
+        XCTAssertNil(request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol"))
     }
 
     func testAgentVoiceChatCoordinatorRestoresPersistedConversationState() throws {
@@ -148,6 +203,36 @@ final class SierraSDKTests: XCTestCase {
         let voiceController = coordinator.makeVoiceController()
 
         XCTAssertNil(voiceController.navigationItem.rightBarButtonItem)
+    }
+
+    @MainActor
+    func testVoiceErrorDisablesSessionControlsButKeepsExitAvailable() async {
+        let muteButton = UIButton()
+        let unmuteButton = UIButton()
+        let endButton = UIButton()
+        var options = AgentVoiceControllerOptions(name: "Voice")
+        options.hideTitleBar = true
+        options.muteButton = muteButton
+        options.unmuteButton = unmuteButton
+        options.endCallButton = endButton
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        let controller = AgentVoiceController(agent: agent, options: options)
+        let callbacks = CapturingVoiceCallbacks()
+        controller.voiceCallbacks = callbacks
+        controller.loadViewIfNeeded()
+        let session = VoiceSessionManager(config: AgentConfig(token: "test-token"), delegate: controller)
+
+        controller.voiceSession(session, didEncounterError: TestVoiceError.connectionFailed)
+        controller.voiceSession(session, didChangeState: .ended)
+        controller.voiceSession(session, didChangeState: .listening)
+        await fulfillment(of: [callbacks.errorExpectation], timeout: 1)
+
+        XCTAssertFalse(muteButton.isEnabled)
+        XCTAssertTrue(endButton.isEnabled)
+
+        controller.endConversation()
+
+        XCTAssertEqual(callbacks.endCount, 1)
     }
 
     func testConversationStateForwardedAsStateQueryItem() {
@@ -365,5 +450,26 @@ private final class CapturingVoiceCoordinatorDelegate: AgentVoiceChatCoordinator
     ) {
         self.coordinator = coordinator
         self.attachments = attachments
+    }
+}
+
+private enum TestVoiceError: Error {
+    case connectionFailed
+}
+
+private final class CapturingVoiceCallbacks: VoiceCallbacks {
+    let errorExpectation: XCTestExpectation = {
+        let expectation = XCTestExpectation(description: "voice error delivered")
+        expectation.assertForOverFulfill = false
+        return expectation
+    }()
+    var endCount = 0
+
+    func onVoiceEnded() {
+        endCount += 1
+    }
+
+    func onVoiceError(error: Error) {
+        errorExpectation.fulfill()
     }
 }

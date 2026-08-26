@@ -62,11 +62,7 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
         self.urlSession = session
 
-        var request = URLRequest(url: url)
-        request.setValue(getUserAgent(isWebView: false), forHTTPHeaderField: "User-Agent")
-        if let apiToken = config.headlessAPIToken {
-            request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
-        }
+        let request = makeWebSocketRequest(url: url)
 
         let task = session.webSocketTask(with: request)
         self.webSocketTask = task
@@ -76,6 +72,18 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         task.resume()
         debugLog("SVP: WebSocket task resumed, URL: \(url)")
         receiveMessages()
+    }
+
+    func makeWebSocketRequest(url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue(getUserAgent(isWebView: false), forHTTPHeaderField: "User-Agent")
+        if let oauthAccessToken = config.oauthAccessToken, !oauthAccessToken.isEmpty {
+            request.setValue("Bearer \(oauthAccessToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("2", forHTTPHeaderField: "X-Sierra-Token-Version")
+        } else if let apiToken = config.headlessAPIToken, !apiToken.isEmpty {
+            request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+        }
+        return request
     }
 
     func disconnect(sendCloseMessage: Bool = true, closeReason: String = AgentVoiceCloseReason.normal.rawValue) {
