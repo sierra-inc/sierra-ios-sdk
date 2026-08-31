@@ -460,11 +460,16 @@ public struct AgentVoiceControllerOptions {
     /// Defaults to the current device locale.
     public var locale: Locale = .current
 
-    /// Client-side SVP conversation identifier used to resume a prior voice session. When nil, a
-    /// new identifier is generated when the controller starts the session.
+    /// An optional external conversation ID supplied by the host app for a new voice conversation.
+    /// Use a unique value of at most 256 UTF-8 bytes for each new conversation. Reusing an external
+    /// ID does not resume a prior voice session. Use `AgentVoiceChatCoordinator` to continue an
+    /// existing voice and chat conversation; it manages the required resume state. When nil, the
+    /// SDK generates a conversation ID.
     public var voiceConversationID: String?
 
-    /// When true, requests that SVP resume the voice session identified by `voiceConversationID`.
+    /// Requests resume only when the SDK also supplies the server-issued resume token.
+    /// `AgentVoiceChatCoordinator` manages this state; setting this directly without the token does
+    /// not resume a prior voice session.
     public var resumeConversation: Bool = false
 
     /// When true, mutes microphone capture while the agent is speaking.
@@ -690,7 +695,15 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        updateWaveformCompositingBackdrop()
         voiceSession?.resumeListening()
+    }
+
+    public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.hasDifferentColorAppearance(comparedTo: traitCollection) == true {
+            updateWaveformCompositingBackdrop()
+        }
     }
 
     public override func viewWillDisappear(_ animated: Bool) {
@@ -1105,6 +1118,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         case .waveform(let waveform):
             // Web hides the input row for two seconds to avoid Chrome capturing its startup sound.
             // Native iOS has no equivalent browser artifact, so it deliberately starts immediately.
+            waveform.compositingBackdropColor = options.voiceStyle.backgroundColor
             waveform.agentColor = options.voiceStyle.voiceWaveformAgentColor
             waveform.userColor = options.voiceStyle.voiceWaveformUserColor
             waveform.scale = options.voiceStyle.voiceWaveformSize
@@ -1168,6 +1182,35 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private var placeholderWaveform: VoiceWaveformView? {
         if case .waveform(let waveform) = placeholderCenterVisual { return waveform }
         return nil
+    }
+
+    private func updateWaveformCompositingBackdrop() {
+        guard
+            let waveform = placeholderWaveform,
+            let window = view.window,
+            !waveform.bounds.isEmpty
+        else {
+            return
+        }
+
+        let waveformOrigin = waveform.convert(waveform.bounds.origin, to: window)
+        let placeholderWasHidden = placeholderContainer.isHidden
+        placeholderContainer.isHidden = true
+        defer { placeholderContainer.isHidden = placeholderWasHidden }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = window.screen.scale
+        format.opaque = true
+        waveform.compositingBackdropImage = UIGraphicsImageRenderer(
+            size: waveform.bounds.size,
+            format: format
+        ).image { rendererContext in
+            let context = rendererContext.cgContext
+            context.setFillColor(UIColor.black.cgColor)
+            context.fill(waveform.bounds)
+            context.translateBy(x: -waveformOrigin.x, y: -waveformOrigin.y)
+            window.layer.render(in: context)
+        }
     }
 
     /// Level updates stop once the renderer takes over the center of the screen, so the waveform's
@@ -1745,6 +1788,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     private func setLoadingStateVisible(_ visible: Bool) {
         loadingContainer.isHidden = !visible
+        if !visible {
+            updateWaveformCompositingBackdrop()
+        }
         placeholderCenterVisual.view.isHidden = visible
         placeholderLabel.isHidden = visible
         if visible {

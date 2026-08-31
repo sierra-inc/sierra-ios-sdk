@@ -110,6 +110,8 @@ public final class AgentVoiceChatCoordinator {
     // True when the pending switch was agent-initiated (vs a manual "Continue in chat" tap); the
     // seeded chat state then drives the agent on resume instead of switching silently.
     private var pendingAgentHandoff = false
+    // A new voice ID also lacks a token initially, so only persisted incomplete state is stale.
+    private var hasIncompletePersistedResumeState = false
     private var chatCallbacksAdapter: ChatCallbacksAdapter?
 
     public init(agent: Agent, options: Options) {
@@ -121,9 +123,19 @@ public final class AgentVoiceChatCoordinator {
 
     public func makeVoiceController() -> AgentVoiceController {
         var voiceOptions = options.voiceOptions
-        let shouldResumeConversation =
-            voiceConversationID != nil || (voiceOptions.resumeConversation && voiceOptions.voiceConversationID != nil)
-        let voiceConversationID = self.voiceConversationID ?? voiceOptions.voiceConversationID ?? UUID().uuidString
+        let configuredVoiceConversationID = voiceOptions.voiceConversationID
+        let configuredIDChanged =
+            configuredVoiceConversationID != nil && configuredVoiceConversationID != voiceConversationID
+        let hasIncompleteResumeState = hasIncompletePersistedResumeState
+        let configuredIDMatchesIncompleteResumeState =
+            hasIncompleteResumeState && configuredVoiceConversationID == voiceConversationID
+        let nextConfiguredVoiceConversationID =
+            configuredIDMatchesIncompleteResumeState ? nil : configuredVoiceConversationID
+        if configuredIDChanged || hasIncompleteResumeState {
+            resetConversation()
+        }
+        let shouldResumeConversation = voiceConversationID != nil && voiceResumeToken != nil
+        let voiceConversationID = self.voiceConversationID ?? nextConfiguredVoiceConversationID ?? UUID().uuidString
         self.voiceConversationID = voiceConversationID
 
         voiceOptions.voiceConversationID = voiceConversationID
@@ -144,13 +156,17 @@ public final class AgentVoiceChatCoordinator {
     }
 
     public func makeChatController() -> AgentChatController {
-        if pendingContinueInChat {
+        let isVoiceToChatHandoff = pendingContinueInChat
+        if isVoiceToChatHandoff {
             seedChatContinuationStateIfAvailable(agentInitiated: pendingAgentHandoff)
             pendingContinueInChat = false
             pendingAgentHandoff = false
         }
 
         var chatOptions = options.chatOptions
+        if isVoiceToChatHandoff {
+            chatOptions.showConversationListByDefault = false
+        }
         // Expose the reconnect-to-voice button only when (a) the host opted in via
         // `options.canReconnectToVoice` and (b) the conversation actually originated in voice.
         if options.canReconnectToVoice && voiceConversationID != nil {
@@ -185,6 +201,7 @@ public final class AgentVoiceChatCoordinator {
         conversationID = nil
         encryptionKey = nil
         voiceResumeToken = nil
+        hasIncompletePersistedResumeState = false
         pendingContinueInChat = false
         pendingAgentHandoff = false
         agent.resetConversation()
@@ -256,6 +273,7 @@ public final class AgentVoiceChatCoordinator {
         if voiceResumeToken == nil {
             voiceResumeToken = persistedState.voiceResumeToken
         }
+        hasIncompletePersistedResumeState = voiceConversationID != nil && voiceResumeToken == nil
     }
 
     private func loadPersistedConversationState() -> PersistedConversationState? {
@@ -336,5 +354,6 @@ extension AgentVoiceChatCoordinator: VoiceCallbacks {
 
     public func onResumeTokenReceived(token: String) {
         self.voiceResumeToken = token
+        hasIncompletePersistedResumeState = false
     }
 }

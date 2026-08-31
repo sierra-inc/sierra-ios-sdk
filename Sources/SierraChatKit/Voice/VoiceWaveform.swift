@@ -83,6 +83,15 @@ public final class VoiceWaveformView: UIView {
         didSet { setNeedsDisplay() }
     }
 
+    /// Used as a fallback until the voice controller supplies the rendered backdrop.
+    package var compositingBackdropColor: UIColor = .clear {
+        didSet { setNeedsDisplay() }
+    }
+
+    package var compositingBackdropImage: UIImage? {
+        didSet { setNeedsDisplay() }
+    }
+
     /// Multiplier of the default waveform dimensions. Values outside
     /// `VOICE_WAVEFORM_SCALE_MIN...VOICE_WAVEFORM_SCALE_MAX` are clamped.
     public var scale: CGFloat = DEFAULT_VOICE_WAVEFORM_SCALE {
@@ -227,38 +236,51 @@ public final class VoiceWaveformView: UIView {
         let originX = (bounds.width - totalWidth) / 2
         let centerY = bounds.midY
 
-        drawRow(
+        let agentPath = rowPath(
             levels: agentSmoother.displayedLevels,
-            color: agentColor,
-            blendMode: .normal,
             originX: originX,
-            centerY: centerY,
-            context: context
+            centerY: centerY
         )
         // The user's row runs in the opposite direction so the two spectra fan out from the middle.
-        drawRow(
+        let userPath = rowPath(
             levels: Array(userSmoother.displayedLevels.reversed()),
-            color: userColor,
-            blendMode: .hardLight,
             originX: originX,
-            centerY: centerY,
-            context: context
+            centerY: centerY
         )
+
+        context.saveGState()
+        context.addPath(agentPath)
+        context.addPath(userPath)
+        context.clip()
+
+        if let compositingBackdropImage {
+            compositingBackdropImage.draw(in: bounds, blendMode: .copy, alpha: 1)
+        } else {
+            context.setBlendMode(.copy)
+            context.setFillColor(compositingBackdropColor.resolvedColor(with: traitCollection).cgColor)
+            context.fill(bounds)
+        }
+
         context.setBlendMode(.normal)
+        context.setFillColor(agentColor.cgColor)
+        context.addPath(agentPath)
+        context.fillPath()
+
+        context.setBlendMode(.hardLight)
+        context.setFillColor(userColor.cgColor)
+        context.addPath(userPath)
+        context.fillPath()
+        context.restoreGState()
     }
 
-    private func drawRow(
+    private func rowPath(
         levels: [CGFloat],
-        color: UIColor,
-        blendMode: CGBlendMode,
         originX: CGFloat,
-        centerY: CGFloat,
-        context: CGContext
-    ) {
+        centerY: CGFloat
+    ) -> CGPath {
         let barWidth = self.barWidth
         let barStride = barWidth + barGap
-        context.setBlendMode(blendMode)
-        context.setFillColor(color.cgColor)
+        let path = CGMutablePath()
         for (index, level) in levels.enumerated() {
             // A silent bar rests as a circle the width of the bar.
             let height = max(barWidth, level * maxBarHeight)
@@ -268,8 +290,12 @@ public final class VoiceWaveformView: UIView {
                 width: barWidth,
                 height: height
             )
-            context.addPath(UIBezierPath(roundedRect: barRect, cornerRadius: barWidth / 2).cgPath)
-            context.fillPath()
+            path.addRoundedRect(
+                in: barRect,
+                cornerWidth: barWidth / 2,
+                cornerHeight: barWidth / 2
+            )
         }
+        return path
     }
 }
