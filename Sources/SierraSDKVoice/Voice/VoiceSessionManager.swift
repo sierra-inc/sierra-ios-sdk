@@ -138,6 +138,7 @@ public class VoiceSessionManager: NSObject {
     private let disableInterruptions: Bool
     private let locale: Locale
     private let agentParameters: [String: String]
+    private let userIdentityToken: String?
     private let enableText: Bool
     private let forwardAgentAttachments: Bool
     private let enableConversationEvents: Bool
@@ -161,7 +162,7 @@ public class VoiceSessionManager: NSObject {
 
     private let audioFormat = "linear16"
     private let sampleRate: Double = 24000
-    private let compatibilityDate = "2026-05-07"
+    private let compatibilityDate = "2026-08-27"
     private let preferredIOBufferDuration: Double = 0.02
     private let waveformAnalysisInterval: Double = 0.02
 
@@ -186,6 +187,7 @@ public class VoiceSessionManager: NSObject {
         disableInterruptions: Bool = false,
         locale: Locale = .current,
         agentParameters: [String: String] = [:],
+        userIdentityToken: String? = nil,
         enableText: Bool = true,
         forwardAgentAttachments: Bool = true,
         enableConversationEvents: Bool = false,
@@ -199,6 +201,7 @@ public class VoiceSessionManager: NSObject {
         self.disableInterruptions = disableInterruptions
         self.locale = locale
         self.agentParameters = agentParameters
+        self.userIdentityToken = userIdentityToken
         self.enableText = enableText
         self.forwardAgentAttachments = forwardAgentAttachments
         self.enableConversationEvents = enableConversationEvents
@@ -472,6 +475,10 @@ public class VoiceSessionManager: NSObject {
     }
 
     private func sendOpen() {
+        transport?.send(type: "open", subMsg: makeOpenSubMessage())
+    }
+
+    func makeOpenSubMessage() -> [String: Any] {
         let localeIdentifier = locale.identifier
         var subMsg: [String: Any] = [
             "compatibilityDate": compatibilityDate,
@@ -497,7 +504,10 @@ public class VoiceSessionManager: NSObject {
             let sortedKeys = agentParameters.sorted { $0.key < $1.key }.map(\.key).joined(separator: ", ")
             debugLog("SVP open: sending agentParameters keys=[\(sortedKeys)]")
         }
-        transport?.send(type: "open", subMsg: subMsg)
+        if let userIdentityToken, !userIdentityToken.isEmpty {
+            subMsg["userIdentityToken"] = userIdentityToken
+        }
+        return subMsg
     }
 
     private func sendAudioClient(_ audioData: Data) {

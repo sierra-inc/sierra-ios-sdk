@@ -456,6 +456,17 @@ public struct AgentVoiceControllerOptions {
     /// used for sensitive runtime context needed at voice start.
     public var voiceAgentParameters: [String: String]?
 
+    /// A signed JWT that identifies the end user for this voice session.
+    /// Empty values are normalized to nil, so downstream code can treat nil
+    /// as the single "no token" state.
+    public var userIdentityToken: String? {
+        didSet {
+            if userIdentityToken?.isEmpty == true {
+                userIdentityToken = nil
+            }
+        }
+    }
+
     /// Locale used for SVP voice session setup.
     /// Defaults to the current device locale.
     public var locale: Locale = .current
@@ -571,7 +582,7 @@ public extension AgentVoiceControllerOptions {
 /// credential seeding, no refresh polling.
 public class AgentVoiceController: UIViewController, VoiceSessionDelegate, MobileRendererDelegate {
     private let agent: Agent
-    private var options: AgentVoiceControllerOptions
+    internal private(set) var options: AgentVoiceControllerOptions
     private var voiceSession: VoiceSessionManager?
     private var secretRefreshOrchestrator: SecretRefreshOrchestrator?
     private var renderer: MobileRendererView?
@@ -639,6 +650,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private var hasReceivedInitialAudioMessage = false
     private var initialGreetingFallbackWorkItem: DispatchWorkItem?
     private let initialGreetingFallbackDelay: TimeInterval = 2.0
+    private var automaticallyStartsVoiceSession = true
 
     private var shouldHideTitleBar: Bool {
         options.hideTitleBar && !options.canSwitchToChat
@@ -671,6 +683,15 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         updateNavigationBarAppearance()
     }
 
+    internal convenience init(
+        agent: Agent,
+        options: AgentVoiceControllerOptions,
+        automaticallyStartsVoiceSession: Bool
+    ) {
+        self.init(agent: agent, options: options)
+        self.automaticallyStartsVoiceSession = automaticallyStartsVoiceSession
+    }
+
     required init?(coder: NSCoder) {
         fatalError("Unreachable")
     }
@@ -683,7 +704,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         setupWaveformPlaceholder()
         setupErrorBanner()
         setLoadingStateVisible(true)
-        startVoiceSession()
+        if automaticallyStartsVoiceSession {
+            startVoiceSession()
+        }
     }
 
     public override func viewWillAppear(_ animated: Bool) {
@@ -753,6 +776,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             disableInterruptions: options.disableInterruptions,
             locale: options.locale,
             agentParameters: voiceAgentParameters,
+            userIdentityToken: options.userIdentityToken,
             enableText: options.enableText,
             forwardAgentAttachments: options.forwardAgentAttachments,
             enableConversationEvents: options.enableTextInput,

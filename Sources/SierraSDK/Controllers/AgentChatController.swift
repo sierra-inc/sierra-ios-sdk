@@ -597,7 +597,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private var scriptMessageHandler: WeakScriptMessageHandler?
     private var webViewLoaded = false
     private let agent: Agent
-    private var options: AgentChatControllerOptions
+    internal private(set) var options: AgentChatControllerOptions
     private let conversationState: String?
     private var loadingSpinner: UIActivityIndicatorView?
     private weak var optionsConversationCallbacks: ConversationCallbacks?
@@ -1361,7 +1361,11 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
         }
 
         do {
-            try await webView.evaluateJavaScript("sierraMobile.printTranscript()", completionHandler: nil)
+            _ = try await webView.evaluateJavaScript(
+                "sierraMobile.printTranscript()",
+                in: nil,
+                contentWorld: .page
+            )
         } catch {
             debugLog("Cannot save transcript, error: \(error)")
         }
@@ -1382,7 +1386,7 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
                 """,
                 arguments: ["attachments": serializedAttachments(attachments)],
                 in: nil,
-                in: .page
+                contentWorld: .page
             )
         } catch {
             throw AgentChatError.invalidAttachments("Failed to send attachments: \(error.localizedDescription)")
@@ -1409,7 +1413,7 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
                     "attachments": serializedAttachments(attachments)
                 ],
                 in: nil,
-                in: .page
+                contentWorld: .page
             )
         } catch {
             throw AgentChatError.sendUserMessageFailed("Failed to send user message: \(error.localizedDescription)")
@@ -1452,7 +1456,7 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
                 "options": optionsArgument
             ],
             in: nil,
-            in: .page
+            contentWorld: .page
         )
         return result as? Bool ?? false
     }
@@ -1465,7 +1469,11 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
     public func endConversation() async {
         debugLog("Ending conversation")
         do {
-            try await webView.evaluateJavaScript("sierraMobile.endConversation()", completionHandler: nil)
+            _ = try await webView.evaluateJavaScript(
+                "sierraMobile.endConversation()",
+                in: nil,
+                contentWorld: .page
+            )
         } catch {
             debugLog("Cannot end conversation, error: \(error)")
         }
@@ -1476,7 +1484,11 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
     public func showConversationList() async {
         debugLog("Showing conversation list")
         do {
-            try await webView.evaluateJavaScript("sierraMobile.showConversationList()", completionHandler: nil)
+            _ = try await webView.evaluateJavaScript(
+                "sierraMobile.showConversationList()",
+                in: nil,
+                contentWorld: .page
+            )
         } catch {
             debugLog("Cannot show conversation list, error: \(error)")
         }

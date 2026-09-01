@@ -123,6 +123,9 @@ public final class AgentVoiceChatCoordinator {
 
     public func makeVoiceController() -> AgentVoiceController {
         var voiceOptions = options.voiceOptions
+        if voiceOptions.userIdentityToken == nil {
+            voiceOptions.userIdentityToken = options.chatOptions.userIdentityToken
+        }
         let configuredVoiceConversationID = voiceOptions.voiceConversationID
         let configuredIDChanged =
             configuredVoiceConversationID != nil && configuredVoiceConversationID != voiceConversationID
@@ -166,6 +169,9 @@ public final class AgentVoiceChatCoordinator {
         var chatOptions = options.chatOptions
         if isVoiceToChatHandoff {
             chatOptions.showConversationListByDefault = false
+        }
+        if chatOptions.userIdentityToken?.isEmpty != false {
+            chatOptions.userIdentityToken = options.voiceOptions.userIdentityToken
         }
         // Expose the reconnect-to-voice button only when (a) the host opted in via
         // `options.canReconnectToVoice` and (b) the conversation actually originated in voice.

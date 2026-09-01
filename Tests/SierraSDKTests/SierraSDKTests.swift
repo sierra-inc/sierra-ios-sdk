@@ -77,6 +77,87 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertNil(request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol"))
     }
 
+    func testVoiceSessionOpenIncludesUserIdentityToken() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        let controller = AgentVoiceController(agent: agent)
+        let authenticatedSession = VoiceSessionManager(
+            config: agent.config,
+            userIdentityToken: "user-identity-token",
+            delegate: controller
+        )
+        let anonymousSession = VoiceSessionManager(
+            config: agent.config,
+            userIdentityToken: "",
+            delegate: controller
+        )
+
+        XCTAssertEqual(
+            authenticatedSession.makeOpenSubMessage()["userIdentityToken"] as? String,
+            "user-identity-token"
+        )
+        XCTAssertEqual(
+            authenticatedSession.makeOpenSubMessage()["compatibilityDate"] as? String,
+            "2026-08-27"
+        )
+        XCTAssertNil(anonymousSession.makeOpenSubMessage()["userIdentityToken"])
+    }
+
+    func testAgentVoiceChatCoordinatorSharesChatUserIdentityTokenWithVoice() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        var voiceOptions = AgentVoiceControllerOptions(name: "Voice")
+        voiceOptions.userIdentityToken = ""
+        var chatOptions = AgentChatControllerOptions(name: "Chat")
+        chatOptions.userIdentityToken = "user-identity-token"
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: voiceOptions,
+                chatOptions: chatOptions
+            )
+        )
+
+        XCTAssertEqual(
+            coordinator.makeVoiceController().options.userIdentityToken,
+            "user-identity-token"
+        )
+    }
+
+    func testAgentVoiceChatCoordinatorSharesVoiceUserIdentityTokenWithChat() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        var voiceOptions = AgentVoiceControllerOptions(name: "Voice")
+        voiceOptions.userIdentityToken = "user-identity-token"
+        var chatOptions = AgentChatControllerOptions(name: "Chat")
+        chatOptions.userIdentityToken = ""
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: voiceOptions,
+                chatOptions: chatOptions
+            )
+        )
+
+        XCTAssertEqual(
+            coordinator.makeChatController().options.userIdentityToken,
+            "user-identity-token"
+        )
+    }
+
+    func testAgentVoiceChatCoordinatorDoesNotShareEmptyUserIdentityToken() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        var voiceOptions = AgentVoiceControllerOptions(name: "Voice")
+        voiceOptions.userIdentityToken = ""
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: voiceOptions,
+                chatOptions: AgentChatControllerOptions(name: "Chat")
+            )
+        )
+
+        XCTAssertNil(coordinator.makeVoiceController().options.userIdentityToken)
+        XCTAssertNil(coordinator.makeChatController().options.userIdentityToken)
+    }
+
     func testAgentVoiceChatCoordinatorRestoresPersistedConversationState() throws {
         let config = AgentConfig(token: "test-token")
         let agent = Agent(config: config)
@@ -433,7 +514,11 @@ final class SierraSDKTests: XCTestCase {
         options.unmuteButton = unmuteButton
         options.endCallButton = endButton
         let agent = Agent(config: AgentConfig(token: "test-token"))
-        let controller = AgentVoiceController(agent: agent, options: options)
+        let controller = AgentVoiceController(
+            agent: agent,
+            options: options,
+            automaticallyStartsVoiceSession: false
+        )
         let callbacks = CapturingVoiceCallbacks()
         controller.voiceCallbacks = callbacks
         controller.loadViewIfNeeded()

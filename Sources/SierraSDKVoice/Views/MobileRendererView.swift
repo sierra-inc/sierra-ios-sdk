@@ -269,7 +269,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await webView.callAsyncJavaScript(
+                _ = try await webView.callAsyncJavaScript(
                     """
                     const fn = window.sierraMobile?.pushAttachments;
                     if (typeof fn === 'function') {
@@ -279,7 +279,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
                     """,
                     arguments: ["json": json],
                     in: nil,
-                    in: .page
+                    contentWorld: .page
                 )
                 debugLog("MobileRenderer: pushAttachments JS executed successfully")
             } catch {
@@ -328,7 +328,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
                 }
             }
             do {
-                try await webView.callAsyncJavaScript(
+                _ = try await webView.callAsyncJavaScript(
                     """
                     const fn = window.sierraMobile?.pushConversationEvents;
                     if (typeof fn === 'function') {
@@ -338,7 +338,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
                     """,
                     arguments: ["json": json],
                     in: nil,
-                    in: .page
+                    contentWorld: .page
                 )
                 debugLog("MobileRenderer: pushConversationEvents JS executed successfully")
                 didSucceed = true
