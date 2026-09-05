@@ -45,6 +45,8 @@ public final class AgentVoiceChatCoordinator {
         let encryptionKey: String?
         let voiceConversationID: String?
         let voiceResumeToken: String?
+        let continueInChatOnResume: Bool?
+        let agentHandoffOnResume: Bool?
     }
 
     public struct Options {
@@ -62,7 +64,8 @@ public final class AgentVoiceChatCoordinator {
         /// When true, the voice view includes a navigation-bar button that lets the user switch
         /// from voice to chat without ending the conversation. On tap, the SVP session is closed
         /// with the `continue_in_chat` close reason and the chat view is presented with the
-        /// transcript preserved. End and dismissal still terminate the conversation as usual.
+        /// transcript preserved. Dismissing the voice view (e.g. back navigation) also closes the
+        /// session with `continue_in_chat`, keeping the conversation resumable in chat.
         public var canSwitchToChat: Bool = true
 
         /// When true, the chat view shown after a voice session ends includes a navigation-bar
@@ -106,12 +109,20 @@ public final class AgentVoiceChatCoordinator {
 
     private let agent: Agent
     private let options: Options
+    // One-shot latch: armed by the voice switch action, a dismissal that seeded continuation
+    // state, or unconsumed seeded state found at init. Consumed by the next `makeChatController()`
+    // call, which seeds storage and suppresses the conversation list for that first presentation.
     private var pendingContinueInChat = false
     // True when the pending switch was agent-initiated (vs a manual "Continue in chat" tap); the
     // seeded chat state then drives the agent on resume instead of switching silently.
     private var pendingAgentHandoff = false
-    // A new voice ID also lacks a token initially, so only persisted incomplete state is stale.
-    private var hasIncompletePersistedResumeState = false
+    // One-shot: armed by the reconnect-to-voice action (built-in chat button or
+    // `prepareVoiceReconnect()`), consumed by the next `makeVoiceController()`. All other voice
+    // launches start a new conversation.
+    private var pendingReconnectVoice = false
+    // Set when the voice session reports an error; the server then treats the call as disconnected
+    // and terminal, so a later dismissal resets instead of seeding chat continuation state.
+    private var voiceSessionErrored = false
     private var chatCallbacksAdapter: ChatCallbacksAdapter?
 
     public init(agent: Agent, options: Options) {
@@ -126,20 +137,33 @@ public final class AgentVoiceChatCoordinator {
         if voiceOptions.userIdentityToken == nil {
             voiceOptions.userIdentityToken = options.chatOptions.userIdentityToken
         }
+        let isReconnect = pendingReconnectVoice
+        pendingReconnectVoice = false
+        voiceSessionErrored = false
+        // Launching voice supersedes any voice-to-chat handoff the host never presented; drop the
+        // latch so a later chat open doesn't seed a stale resume flag.
+        pendingContinueInChat = false
+        pendingAgentHandoff = false
         let configuredVoiceConversationID = voiceOptions.voiceConversationID
         let configuredIDChanged =
             configuredVoiceConversationID != nil && configuredVoiceConversationID != voiceConversationID
-        let hasIncompleteResumeState = hasIncompletePersistedResumeState
-        let configuredIDMatchesIncompleteResumeState =
-            hasIncompleteResumeState && configuredVoiceConversationID == voiceConversationID
-        let nextConfiguredVoiceConversationID =
-            configuredIDMatchesIncompleteResumeState ? nil : configuredVoiceConversationID
-        if configuredIDChanged || hasIncompleteResumeState {
+        if configuredIDChanged {
             resetConversation()
         }
-        let shouldResumeConversation = voiceConversationID != nil && voiceResumeToken != nil
-        let voiceConversationID = self.voiceConversationID ?? nextConfiguredVoiceConversationID ?? UUID().uuidString
-        self.voiceConversationID = voiceConversationID
+        let shouldResumeConversation =
+            isReconnect && voiceConversationID != nil && voiceResumeToken != nil
+        if !shouldResumeConversation {
+            // Voice resume is an explicit, one-shot reconnect action; every other launch starts a
+            // new voice conversation. Clear the in-memory chat credentials too: they describe the
+            // previous conversation, and a dismissal before this session delivers its own
+            // credentials must not seed them against this launch's voice ID. The previous
+            // conversation stays resumable through persisted storage, which is left untouched
+            // until this session seeds its replacement.
+            voiceConversationID = configuredVoiceConversationID ?? UUID().uuidString
+            voiceResumeToken = nil
+            conversationID = nil
+            encryptionKey = nil
+        }
 
         voiceOptions.voiceConversationID = voiceConversationID
         voiceOptions.resumeConversation = shouldResumeConversation
@@ -152,6 +176,7 @@ public final class AgentVoiceChatCoordinator {
         }
         voiceOptions.canSwitchToChat = options.canSwitchToChat
         voiceOptions.autoShowChatOnEnd = options.autoShowChatOnEnd
+        voiceOptions.continueInChatOnDismiss = true
 
         let voiceController = AgentVoiceController(agent: agent, options: voiceOptions)
         voiceController.voiceCallbacks = self
@@ -179,6 +204,7 @@ public final class AgentVoiceChatCoordinator {
             chatOptions.canReconnectToVoice = true
             chatOptions.onReconnectVoice = { [weak self] in
                 guard let self else { return }
+                self.prepareVoiceReconnect()
                 self.delegate?.coordinatorDidRequestVoiceReconnect(self)
             }
         }
@@ -207,10 +233,21 @@ public final class AgentVoiceChatCoordinator {
         conversationID = nil
         encryptionKey = nil
         voiceResumeToken = nil
-        hasIncompletePersistedResumeState = false
         pendingContinueInChat = false
         pendingAgentHandoff = false
+        pendingReconnectVoice = false
+        voiceSessionErrored = false
         agent.resetConversation()
+    }
+
+    /// Arms the next `makeVoiceController()` call to resume the current voice conversation instead
+    /// of starting a new one; the server then emits a `continue-in-voice` client event so the agent
+    /// can greet the user back to voice. The built-in reconnect-to-voice chat button
+    /// (`Options.canReconnectToVoice`) arms this automatically; call it directly when presenting
+    /// voice from a custom reconnect control. One-shot: consumed by the next
+    /// `makeVoiceController()` call.
+    public func prepareVoiceReconnect() {
+        pendingReconnectVoice = true
     }
 
     private func handleSwitchToChat(agentInitiated: Bool) {
@@ -273,13 +310,15 @@ public final class AgentVoiceChatCoordinator {
         guard let persistedState = loadPersistedConversationState() else { return }
         conversationID = persistedState.conversationID
         encryptionKey = persistedState.encryptionKey
-        if voiceConversationID == nil {
-            voiceConversationID = persistedState.voiceConversationID
-        }
-        if voiceResumeToken == nil {
-            voiceResumeToken = persistedState.voiceResumeToken
-        }
-        hasIncompletePersistedResumeState = voiceConversationID != nil && voiceResumeToken == nil
+        voiceConversationID = persistedState.voiceConversationID
+        voiceResumeToken = persistedState.voiceResumeToken
+        // Seeded resume flags mean the last voice session ended toward chat and no chat controller
+        // has consumed them yet (the embed strips them once chat opens). Re-arm the one-shot latch
+        // so the next chat open still lands on the continued transcript instead of the list, even
+        // across an app restart.
+        pendingAgentHandoff = persistedState.agentHandoffOnResume ?? false
+        pendingContinueInChat =
+            pendingAgentHandoff || (persistedState.continueInChatOnResume ?? false)
     }
 
     private func loadPersistedConversationState() -> PersistedConversationState? {
@@ -328,10 +367,35 @@ extension AgentVoiceChatCoordinator: VoiceCallbacks {
     }
 
     public func onVoiceDismissed() {
-        resetConversation()
+        // Dismissal (e.g. back navigation) closes the voice leg with `continue_in_chat`, so persist
+        // the continuation state immediately -- the user may not open chat until after an app
+        // restart.
+        guard conversationID != nil, encryptionKey != nil else {
+            // This session never delivered credentials (dismissed or errored before session info
+            // arrived), so it created nothing continuable. Leave persisted storage untouched and
+            // re-sync memory to it so the previous conversation, if any, stays resumable in chat
+            // and voice.
+            voiceConversationID = nil
+            conversationID = nil
+            encryptionKey = nil
+            voiceResumeToken = nil
+            restorePersistedConversationState()
+            return
+        }
+        if voiceSessionErrored {
+            // The server treats an errored call as disconnected and terminal; nothing to resume.
+            resetConversation()
+            return
+        }
+        seedChatContinuationStateIfAvailable(agentInitiated: false)
+        // Arm the one-shot latch so the next chat open lands on the continued transcript instead
+        // of the conversation list.
+        pendingContinueInChat = true
+        pendingAgentHandoff = false
     }
 
     public func onVoiceError(error: Error) {
+        voiceSessionErrored = true
         delegate?.coordinator(self, didEncounterVoiceError: error)
     }
 
@@ -360,6 +424,5 @@ extension AgentVoiceChatCoordinator: VoiceCallbacks {
 
     public func onResumeTokenReceived(token: String) {
         self.voiceResumeToken = token
-        hasIncompletePersistedResumeState = false
     }
 }

@@ -180,7 +180,7 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(coordinator.voiceResumeToken, "resume-123")
     }
 
-    func testAgentVoiceChatCoordinatorMatchingConfiguredVoiceConversationIDResumes() throws {
+    func testAgentVoiceChatCoordinatorVoiceLaunchWithoutReconnectStartsFreshKeepingPersistedChatState() throws {
         let config = AgentConfig(token: "test-token")
         let agent = Agent(config: config)
         try persistConversationState(
@@ -188,13 +188,10 @@ final class SierraSDKTests: XCTestCase {
             voiceConversationID: "voice-123",
             voiceResumeToken: "resume-123"
         )
-
-        var voiceOptions = AgentVoiceControllerOptions(name: "Voice")
-        voiceOptions.voiceConversationID = "voice-123"
         let coordinator = AgentVoiceChatCoordinator(
             agent: agent,
             options: .init(
-                voiceOptions: voiceOptions,
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
                 chatOptions: AgentChatControllerOptions(name: "Chat")
             )
         )
@@ -202,10 +199,53 @@ final class SierraSDKTests: XCTestCase {
         let voiceController = coordinator.makeVoiceController()
 
         withExtendedLifetime(voiceController) {
-            XCTAssertEqual(coordinator.conversationID, "chat-123")
-            XCTAssertEqual(coordinator.encryptionKey, "enc-123")
-            XCTAssertEqual(coordinator.voiceConversationID, "voice-123")
-            XCTAssertEqual(coordinator.voiceResumeToken, "resume-123")
+            XCTAssertFalse(voiceController.options.resumeConversation)
+            XCTAssertNil(voiceController.options.resumeToken)
+            XCTAssertTrue(voiceController.options.continueInChatOnDismiss)
+            XCTAssertNotNil(coordinator.voiceConversationID)
+            XCTAssertNotEqual(coordinator.voiceConversationID, "voice-123")
+            XCTAssertNil(coordinator.voiceResumeToken)
+            // In-memory chat credentials are cleared so an early dismissal can't seed the prior
+            // conversation against the new voice ID; persisted storage keeps it resumable in chat.
+            XCTAssertNil(coordinator.conversationID)
+            XCTAssertNil(coordinator.encryptionKey)
+            XCTAssertNotNil(agent.getStorage().getItem("embed-chat-test-token"))
+        }
+    }
+
+    func testAgentVoiceChatCoordinatorPrepareVoiceReconnectResumesOnce() throws {
+        let config = AgentConfig(token: "test-token")
+        let agent = Agent(config: config)
+        try persistConversationState(
+            agent: agent,
+            voiceConversationID: "voice-123",
+            voiceResumeToken: "resume-123"
+        )
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat")
+            )
+        )
+
+        coordinator.prepareVoiceReconnect()
+        let reconnectController = coordinator.makeVoiceController()
+
+        withExtendedLifetime(reconnectController) {
+            XCTAssertTrue(reconnectController.options.resumeConversation)
+            XCTAssertEqual(reconnectController.options.resumeToken, "resume-123")
+            XCTAssertEqual(reconnectController.options.resumeReason, .continueInVoice)
+            XCTAssertEqual(reconnectController.options.voiceConversationID, "voice-123")
+        }
+
+        // The latch is one-shot: the next launch starts fresh.
+        let freshController = coordinator.makeVoiceController()
+
+        withExtendedLifetime(freshController) {
+            XCTAssertFalse(freshController.options.resumeConversation)
+            XCTAssertNil(freshController.options.resumeToken)
+            XCTAssertNotEqual(freshController.options.voiceConversationID, "voice-123")
         }
     }
 
@@ -279,66 +319,7 @@ final class SierraSDKTests: XCTestCase {
         }
     }
 
-    func testAgentVoiceChatCoordinatorMatchingConfiguredIDWithoutResumeTokenGeneratesFreshID() throws {
-        let config = AgentConfig(token: "test-token")
-        let agent = Agent(config: config)
-        try persistConversationState(
-            agent: agent,
-            voiceConversationID: "voice-123",
-            voiceResumeToken: nil
-        )
-
-        var voiceOptions = AgentVoiceControllerOptions(name: "Voice")
-        voiceOptions.voiceConversationID = "voice-123"
-        let coordinator = AgentVoiceChatCoordinator(
-            agent: agent,
-            options: .init(
-                voiceOptions: voiceOptions,
-                chatOptions: AgentChatControllerOptions(name: "Chat")
-            )
-        )
-
-        let voiceController = coordinator.makeVoiceController()
-
-        withExtendedLifetime(voiceController) {
-            XCTAssertNil(coordinator.conversationID)
-            XCTAssertNil(coordinator.encryptionKey)
-            XCTAssertNil(agent.getStorage().getItem("embed-chat-test-token"))
-            XCTAssertNotNil(coordinator.voiceConversationID)
-            XCTAssertNotEqual(coordinator.voiceConversationID, "voice-123")
-            XCTAssertNil(coordinator.voiceResumeToken)
-        }
-    }
-
-    func testAgentVoiceChatCoordinatorSDKManagedIDWithoutResumeTokenGeneratesFreshID() throws {
-        let config = AgentConfig(token: "test-token")
-        let agent = Agent(config: config)
-        try persistConversationState(
-            agent: agent,
-            voiceConversationID: "voice-123",
-            voiceResumeToken: nil
-        )
-        let coordinator = AgentVoiceChatCoordinator(
-            agent: agent,
-            options: .init(
-                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
-                chatOptions: AgentChatControllerOptions(name: "Chat")
-            )
-        )
-
-        let voiceController = coordinator.makeVoiceController()
-
-        withExtendedLifetime(voiceController) {
-            XCTAssertNil(coordinator.conversationID)
-            XCTAssertNil(coordinator.encryptionKey)
-            XCTAssertNil(agent.getStorage().getItem("embed-chat-test-token"))
-            XCTAssertNotNil(coordinator.voiceConversationID)
-            XCTAssertNotEqual(coordinator.voiceConversationID, "voice-123")
-            XCTAssertNil(coordinator.voiceResumeToken)
-        }
-    }
-
-    func testAgentVoiceChatCoordinatorKeepsIDWhileResumeTokenIsPending() {
+    func testAgentVoiceChatCoordinatorRepeatedVoiceLaunchesStartFreshConversations() {
         let coordinator = AgentVoiceChatCoordinator(
             agent: Agent(config: AgentConfig(token: "test-token")),
             options: .init(
@@ -348,14 +329,289 @@ final class SierraSDKTests: XCTestCase {
         )
 
         let firstVoiceController = coordinator.makeVoiceController()
-        let pendingVoiceConversationID = coordinator.voiceConversationID
+        let firstVoiceConversationID = coordinator.voiceConversationID
         let secondVoiceController = coordinator.makeVoiceController()
 
         withExtendedLifetime((firstVoiceController, secondVoiceController)) {
-            XCTAssertNotNil(pendingVoiceConversationID)
-            XCTAssertEqual(coordinator.voiceConversationID, pendingVoiceConversationID)
+            XCTAssertNotNil(firstVoiceConversationID)
+            XCTAssertNotNil(coordinator.voiceConversationID)
+            XCTAssertNotEqual(coordinator.voiceConversationID, firstVoiceConversationID)
             XCTAssertNil(coordinator.voiceResumeToken)
         }
+    }
+
+    func testAgentVoiceChatCoordinatorDismissalSeedsChatContinuationState() throws {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat")
+            )
+        )
+
+        let voiceController = coordinator.makeVoiceController()
+        try withExtendedLifetime(voiceController) {
+            coordinator.onSessionInfoReceived(conversationID: "chat-1", encryptionKey: "enc-1")
+            coordinator.onResumeTokenReceived(token: "resume-1")
+
+            coordinator.onVoiceDismissed()
+
+            let state = try XCTUnwrap(loadSeededConversationState(agent: agent))
+            XCTAssertEqual(state["conversationID"] as? String, "chat-1")
+            XCTAssertEqual(state["encryptionKey"] as? String, "enc-1")
+            XCTAssertEqual(state["continueInChatOnResume"] as? Bool, true)
+            XCTAssertNil(state["agentHandoffOnResume"])
+            XCTAssertEqual(state["voiceResumeToken"] as? String, "resume-1")
+            XCTAssertEqual(coordinator.conversationID, "chat-1")
+            XCTAssertEqual(coordinator.encryptionKey, "enc-1")
+        }
+    }
+
+    @MainActor
+    func testAgentVoiceChatCoordinatorDismissalOverridesConversationListDefaultOnce() {
+        var chatOptions = AgentChatControllerOptions(name: "Chat")
+        chatOptions.userIdentityToken = "user-identity-token"
+        chatOptions.enableConversationList = true
+        chatOptions.showConversationListByDefault = true
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: Agent(config: AgentConfig(token: "test-token")),
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: chatOptions
+            )
+        )
+
+        let voiceController = coordinator.makeVoiceController()
+        withExtendedLifetime(voiceController) {
+            coordinator.onSessionInfoReceived(conversationID: "chat-1", encryptionKey: "enc-1")
+            coordinator.onVoiceDismissed()
+
+            let continuationController = coordinator.makeChatController()
+            let ordinaryController = coordinator.makeChatController()
+
+            if #available(iOS 16.0, *) {
+                XCTAssertNotNil(continuationController.navigationItem.backAction)
+                XCTAssertNil(ordinaryController.navigationItem.backAction)
+            } else {
+                XCTAssertNotNil(continuationController.navigationItem.leftBarButtonItem)
+                XCTAssertNil(ordinaryController.navigationItem.leftBarButtonItem)
+            }
+        }
+    }
+
+    @MainActor
+    func testAgentVoiceChatCoordinatorRestoredDismissalContinuationSuppressesConversationList() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        var chatOptions = AgentChatControllerOptions(name: "Chat")
+        chatOptions.userIdentityToken = "user-identity-token"
+        chatOptions.enableConversationList = true
+        chatOptions.showConversationListByDefault = true
+        let firstCoordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: chatOptions
+            )
+        )
+        let voiceController = firstCoordinator.makeVoiceController()
+        withExtendedLifetime(voiceController) {
+            firstCoordinator.onSessionInfoReceived(conversationID: "chat-1", encryptionKey: "enc-1")
+            firstCoordinator.onVoiceDismissed()
+        }
+
+        // Simulates an app restart before chat is opened.
+        let recreatedCoordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: chatOptions
+            )
+        )
+        let continuationController = recreatedCoordinator.makeChatController()
+
+        if #available(iOS 16.0, *) {
+            XCTAssertNotNil(continuationController.navigationItem.backAction)
+        } else {
+            XCTAssertNotNil(continuationController.navigationItem.leftBarButtonItem)
+        }
+    }
+
+    func testAgentVoiceChatCoordinatorDismissalAfterVoiceErrorResets() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat")
+            )
+        )
+
+        let voiceController = coordinator.makeVoiceController()
+        withExtendedLifetime(voiceController) {
+            coordinator.onSessionInfoReceived(conversationID: "chat-1", encryptionKey: "enc-1")
+            coordinator.onResumeTokenReceived(token: "resume-1")
+            coordinator.onVoiceError(error: TestVoiceError.connectionFailed)
+
+            coordinator.onVoiceDismissed()
+
+            XCTAssertNil(coordinator.conversationID)
+            XCTAssertNil(coordinator.encryptionKey)
+            XCTAssertNil(coordinator.voiceConversationID)
+            XCTAssertNil(coordinator.voiceResumeToken)
+            XCTAssertNil(agent.getStorage().getItem("embed-chat-test-token"))
+        }
+    }
+
+    func testAgentVoiceChatCoordinatorDismissalWithoutCredentialsLeavesNoState() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat")
+            )
+        )
+
+        let voiceController = coordinator.makeVoiceController()
+        withExtendedLifetime(voiceController) {
+            coordinator.onVoiceDismissed()
+
+            XCTAssertNil(coordinator.conversationID)
+            XCTAssertNil(coordinator.voiceConversationID)
+            XCTAssertNil(agent.getStorage().getItem("embed-chat-test-token"))
+        }
+    }
+
+    func testAgentVoiceChatCoordinatorDismissalBeforeSessionInfoPreservesPriorConversation() throws {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        try persistConversationState(
+            agent: agent,
+            voiceConversationID: "voice-123",
+            voiceResumeToken: "resume-123"
+        )
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat")
+            )
+        )
+
+        let voiceController = coordinator.makeVoiceController()
+        try withExtendedLifetime(voiceController) {
+            coordinator.onVoiceDismissed()
+
+            // The abandoned launch leaves the persisted conversation untouched and re-syncs memory
+            // to it, so the prior conversation keeps working -- including explicit voice reconnect.
+            XCTAssertEqual(coordinator.conversationID, "chat-123")
+            XCTAssertEqual(coordinator.encryptionKey, "enc-123")
+            XCTAssertEqual(coordinator.voiceConversationID, "voice-123")
+            XCTAssertEqual(coordinator.voiceResumeToken, "resume-123")
+            let state = try XCTUnwrap(loadSeededConversationState(agent: agent))
+            XCTAssertEqual(state["voiceConversationID"] as? String, "voice-123")
+            XCTAssertEqual(state["voiceResumeToken"] as? String, "resume-123")
+        }
+
+        coordinator.prepareVoiceReconnect()
+        let reconnectController = coordinator.makeVoiceController()
+        withExtendedLifetime(reconnectController) {
+            XCTAssertTrue(reconnectController.options.resumeConversation)
+            XCTAssertEqual(reconnectController.options.resumeToken, "resume-123")
+            XCTAssertEqual(reconnectController.options.voiceConversationID, "voice-123")
+        }
+    }
+
+    func testAgentVoiceChatCoordinatorErrorBeforeSessionInfoPreservesPriorConversation() throws {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        try persistConversationState(
+            agent: agent,
+            voiceConversationID: "voice-123",
+            voiceResumeToken: "resume-123"
+        )
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat")
+            )
+        )
+
+        let voiceController = coordinator.makeVoiceController()
+        withExtendedLifetime(voiceController) {
+            coordinator.onVoiceError(error: TestVoiceError.connectionFailed)
+            coordinator.onVoiceDismissed()
+
+            XCTAssertEqual(coordinator.conversationID, "chat-123")
+            XCTAssertEqual(coordinator.voiceConversationID, "voice-123")
+            XCTAssertEqual(coordinator.voiceResumeToken, "resume-123")
+            XCTAssertNotNil(agent.getStorage().getItem("embed-chat-test-token"))
+        }
+    }
+
+    func testAgentVoiceChatCoordinatorVoiceAfterDismissalStartsFreshConversation() throws {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat")
+            )
+        )
+
+        let firstController = coordinator.makeVoiceController()
+        var dismissedVoiceConversationID: String?
+        withExtendedLifetime(firstController) {
+            coordinator.onSessionInfoReceived(conversationID: "chat-1", encryptionKey: "enc-1")
+            coordinator.onResumeTokenReceived(token: "resume-1")
+            coordinator.onVoiceDismissed()
+            dismissedVoiceConversationID = coordinator.voiceConversationID
+        }
+
+        let secondController = coordinator.makeVoiceController()
+        try withExtendedLifetime(secondController) {
+            XCTAssertNotNil(dismissedVoiceConversationID)
+            XCTAssertFalse(secondController.options.resumeConversation)
+            XCTAssertNil(secondController.options.resumeToken)
+            XCTAssertNotEqual(secondController.options.voiceConversationID, dismissedVoiceConversationID)
+            // The dismissed conversation stays resumable in chat via persisted storage.
+            XCTAssertNil(coordinator.conversationID)
+            let state = try XCTUnwrap(loadSeededConversationState(agent: agent))
+            XCTAssertEqual(state["conversationID"] as? String, "chat-1")
+        }
+    }
+
+    func testAgentVoiceChatCoordinatorVoiceLaunchDropsStaleHandoffLatch() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        let coordinator = AgentVoiceChatCoordinator(
+            agent: agent,
+            options: .init(
+                voiceOptions: AgentVoiceControllerOptions(name: "Voice"),
+                chatOptions: AgentChatControllerOptions(name: "Chat")
+            )
+        )
+
+        let firstVoiceController = coordinator.makeVoiceController()
+        withExtendedLifetime(firstVoiceController) {
+            coordinator.onSessionInfoReceived(conversationID: "chat-1", encryptionKey: "enc-1")
+            // The agent requests a handoff but the host never presents chat.
+            firstVoiceController.options.onSwitchToChat?(true)
+        }
+
+        let secondVoiceController = coordinator.makeVoiceController()
+        coordinator.onSessionInfoReceived(conversationID: "chat-2", encryptionKey: "enc-2")
+        let chatController = coordinator.makeChatController()
+
+        withExtendedLifetime((secondVoiceController, chatController)) {
+            // The stale handoff must not seed resume flags for the new conversation.
+            XCTAssertNil(agent.getStorage().getItem("embed-chat-test-token"))
+        }
+    }
+
+    private func loadSeededConversationState(agent: Agent) throws -> [String: Any]? {
+        guard let json = agent.getStorage().getItem("embed-chat-test-token") else { return nil }
+        let data = try XCTUnwrap(json.data(using: .utf8))
+        return try JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
     private func persistConversationState(
@@ -556,6 +812,38 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertFalse(options.toQueryItems().contains { $0.name == "state" })
         XCTAssertFalse(options.toQueryItems(conversationState: nil).contains { $0.name == "state" })
         XCTAssertFalse(options.toQueryItems(conversationState: "").contains { $0.name == "state" })
+    }
+
+    func testConversationIDForwardedWithUserIdentityToken() {
+        var options = AgentChatControllerOptions(name: "Test")
+        options.userIdentityToken = "user-identity-token"
+
+        let queryItems = options.toQueryItems(conversationID: "external-123")
+
+        XCTAssertEqual(queryItems.first { $0.name == "conversationID" }?.value, "external-123")
+    }
+
+    func testConversationIDRequiresUserIdentityToken() {
+        let options = AgentChatControllerOptions(name: "Test")
+
+        XCTAssertFalse(
+            options.toQueryItems(conversationID: "external-123").contains {
+                $0.name == "conversationID"
+            }
+        )
+    }
+
+    func testConversationStateTakesPrecedenceOverConversationID() {
+        var options = AgentChatControllerOptions(name: "Test")
+        options.userIdentityToken = "user-identity-token"
+
+        let queryItems = options.toQueryItems(
+            conversationState: "opaque-state",
+            conversationID: "external-123"
+        )
+
+        XCTAssertEqual(queryItems.first { $0.name == "state" }?.value, "opaque-state")
+        XCTAssertFalse(queryItems.contains { $0.name == "conversationID" })
     }
 
     func testUpdateVariablesAndSecretsOnSessionResumeForwardedAsQueryItem() {

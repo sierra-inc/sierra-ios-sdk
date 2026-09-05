@@ -364,7 +364,7 @@ private extension AgentChatControllerOptions {
 }
 
 extension AgentChatControllerOptions {
-    func toQueryItems(conversationState: String? = nil) -> [URLQueryItem] {
+    func toQueryItems(conversationState: String? = nil, conversationID: String? = nil) -> [URLQueryItem] {
         var queryItems = [URLQueryItem]()
 
         // Should match the web embed's Brand shape.
@@ -547,6 +547,12 @@ extension AgentChatControllerOptions {
 
         if let conversationState, !conversationState.isEmpty {
             queryItems.append(URLQueryItem(name: "state", value: conversationState))
+        } else if let conversationID, !conversationID.isEmpty {
+            if userIdentityToken?.isEmpty == false {
+                queryItems.append(URLQueryItem(name: "conversationID", value: conversationID))
+            } else {
+                debugLog("conversationID requires userIdentityToken; ignoring conversationID")
+            }
         }
 
         if enableConversationList {
@@ -599,6 +605,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private let agent: Agent
     internal private(set) var options: AgentChatControllerOptions
     private let conversationState: String?
+    private let conversationID: String?
     private var loadingSpinner: UIActivityIndicatorView?
     private weak var optionsConversationCallbacks: ConversationCallbacks?
     private var requestEndConversationEnabled = false
@@ -621,14 +628,19 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     ///     instance that should resume that conversation; do not retain it on long-lived
     ///     configuration, since reusing the same value after the user starts a new
     ///     conversation will cause that new conversation to be replaced by the original one.
+    ///   - conversationID: Optional external conversation ID associated with an existing
+    ///     conversation. Requires `options.userIdentityToken` for the user associated with the
+    ///     conversation. Do not provide both `conversationState` and `conversationID`.
     public init(
         agent: Agent,
         options: AgentChatControllerOptions,
-        conversationState: String? = nil
+        conversationState: String? = nil,
+        conversationID: String? = nil
     ) {
         self.agent = agent
         self.options = options
         self.conversationState = conversationState
+        self.conversationID = conversationID
 
         // The custom greeting was initially a UI-only concept and thus specified via AgentChatControllerOptions,
         // but it now also affects the API, so it's in ConversationOptions. Read it from both places
@@ -884,7 +896,10 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         }
 
         // Turn config and options into query parameters that the iOS web embed expects.
-        var queryItems = self.options.toQueryItems(conversationState: self.conversationState)
+        var queryItems = self.options.toQueryItems(
+            conversationState: self.conversationState,
+            conversationID: self.conversationID
+        )
         if let target = self.agent.config.target, !target.isEmpty {
             queryItems.append(URLQueryItem(name: "target", value: target))
         }

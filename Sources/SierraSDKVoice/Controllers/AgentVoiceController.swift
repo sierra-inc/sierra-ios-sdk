@@ -473,9 +473,10 @@ public struct AgentVoiceControllerOptions {
 
     /// An optional external conversation ID supplied by the host app for a new voice conversation.
     /// Use a unique value of at most 256 UTF-8 bytes for each new conversation. Reusing an external
-    /// ID does not resume a prior voice session. Use `AgentVoiceChatCoordinator` to continue an
-    /// existing voice and chat conversation; it manages the required resume state. When nil, the
-    /// SDK generates a conversation ID.
+    /// ID does not resume a prior voice session. Use `AgentVoiceChatCoordinator` and its
+    /// `prepareVoiceReconnect()` (or the built-in reconnect button) to continue an existing voice
+    /// and chat conversation; it manages the required resume state. When nil, the SDK generates a
+    /// conversation ID.
     public var voiceConversationID: String?
 
     /// Requests resume only when the SDK also supplies the server-issued resume token.
@@ -540,6 +541,11 @@ public struct AgentVoiceControllerOptions {
     /// When true, tapping End closes the SVP session with the `continue_in_chat` close reason and
     /// invokes `onSwitchToChat` instead of `onVoiceEnded`.
     internal var autoShowChatOnEnd: Bool = false
+
+    /// When true, dismissing the voice view (e.g. back navigation) while the session is still
+    /// active closes the SVP session with the `continue_in_chat` close reason instead of `normal`,
+    /// keeping the conversation resumable in chat. `onVoiceDismissed` still fires.
+    internal var continueInChatOnDismiss: Bool = false
 
     /// Optional hint describing why the client is resuming. Only meaningful when
     /// `resumeConversation` is true; when set, the server emits a `continue-in-voice` client event
@@ -744,14 +750,14 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         if shouldShutdownVoiceSessionOnDisappear {
-            shutdownVoiceSessionIfNeeded()
+            shutdownVoiceSessionIfNeeded(closeReason: dismissalCloseReason)
             fireDismissedIfNeeded()
         }
     }
 
     deinit {
         cancelInitialGreetingFallback()
-        shutdownVoiceSessionIfNeeded()
+        shutdownVoiceSessionIfNeeded(closeReason: dismissalCloseReason)
         fireDismissedIfNeeded()
     }
 
@@ -802,6 +808,12 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     private var shouldShutdownVoiceSessionOnDisappear: Bool {
         isBeingDismissed || isMovingFromParent || navigationController?.isBeingDismissed == true
+    }
+
+    /// Dismissal of a coordinator-managed session keeps the conversation resumable in chat; direct
+    /// integrations keep the pre-existing terminal close.
+    private var dismissalCloseReason: AgentVoiceCloseReason {
+        options.continueInChatOnDismiss ? .continueInChat : .normal
     }
 
     // MARK: - VoiceSessionDelegate
