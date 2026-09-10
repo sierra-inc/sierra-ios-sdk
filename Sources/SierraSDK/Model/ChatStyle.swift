@@ -242,6 +242,9 @@ public enum FontType: String {
 
 /// Color settings for chat UI. When useConfiguredStyle is true in AgentChatControllerOptions, these
 /// settings are overridden by server-configured colors.
+///
+/// Only `assistantBubble`, `userBubble`, `inputPlaceholder`, `disclosure`, and `disclosureLink`
+/// support an alpha component below 1; the chat renders every other color fully opaque.
 public struct ChatStyleColors {
     /// The background color for the chat view.
     public let backgroundColor: UIColor
@@ -286,7 +289,7 @@ public struct ChatStyleColors {
 
     /// The color of the placeholder text shown in the message input, also used for the send
     /// button arrow when the input is empty. When nil, falls back to `text` at reduced opacity;
-    /// when set, it is used at full opacity.
+    /// when set, its configured opacity is used.
     public let inputPlaceholder: UIColor?
 
     /// The color of the file upload (attachment) button icon in the chat input. When nil,
@@ -294,11 +297,12 @@ public struct ChatStyleColors {
     /// with `backgroundColor` in light or dark mode.
     public let uploadButtonIcon: UIColor?
 
-    /// The color of the disclosure (disclaimer) text shown before any chat messages.
-    /// When nil, the default disclosure text color is used.
+    /// The color of the disclosure (disclaimer) text shown before any chat messages. When nil,
+    /// defaults to `text` at 65% opacity; when set, its configured opacity is used.
     public let disclosure: UIColor?
 
-    /// The color of links within the disclosure (disclaimer) text.
+    /// The color of links within the disclosure (disclaimer) text. When nil, defaults to
+    /// `assistantBubbleLink` at 65% opacity; when set, its configured opacity is used.
     public let disclosureLink: UIColor?
 
     /// The color of links in chat bubbles for messages from the user.

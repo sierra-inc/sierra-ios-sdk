@@ -770,12 +770,19 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         webView.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(webView)
 
+        // Keep the keyboard guide defined if a SwiftUI container temporarily detaches its layout engine.
+        let keyboardGuideFallback = containerView.keyboardLayoutGuide.topAnchor.constraint(
+            equalTo: containerView.safeAreaLayoutGuide.bottomAnchor
+        )
+        keyboardGuideFallback.priority = .defaultLow
+
         // Set up constraints using keyboard layout guide
         NSLayoutConstraint.activate([
             webView.topAnchor.constraint(equalTo: containerView.safeAreaLayoutGuide.topAnchor),
             webView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: containerView.keyboardLayoutGuide.topAnchor)
+            webView.bottomAnchor.constraint(equalTo: containerView.keyboardLayoutGuide.topAnchor),
+            keyboardGuideFallback
         ])
 
         self.view = containerView

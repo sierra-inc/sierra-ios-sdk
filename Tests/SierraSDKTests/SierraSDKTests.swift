@@ -947,6 +947,23 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertNil(weakController, "AgentChatController must deallocate; a WKScriptMessageHandler retain cycle is leaking it")
     }
 
+    func testChatStyleColorsSerializesOpacity() {
+        let opaque = UIColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1)
+        let translucent = UIColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 0.8)
+        let transparent = UIColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 0)
+        let colors = ChatStyleColors(
+            backgroundColor: opaque,
+            assistantBubble: transparent,
+            userBubble: translucent
+        )
+
+        let json = colors.toJSON()
+
+        XCTAssertEqual(json["background"], "#336699")
+        XCTAssertEqual(json["userBubble"], "#336699CC")
+        XCTAssertEqual(json["assistantBubble"], "#33669900")
+    }
+
     @MainActor
     func testLoadingSpinnerColorPrefersTextOverTitleBarText() {
         // The Outfitters testbed preset: white title bar text is illegible on the cream chat
