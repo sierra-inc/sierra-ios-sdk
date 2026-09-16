@@ -85,13 +85,18 @@ public struct ChatTextStyle {
     /// Styling overrides for hyperlinks within this region's text.
     public let link: ChatLinkStyle?
 
+    /// Text alignment: "left", "center", "right", "start", or "end".
+    /// When omitted, keeps the region's default alignment.
+    public let textAlign: String?
+
     public init(fontSize: Int? = nil,
                 fontWeight: Int? = nil,
                 lineHeight: Double? = nil,
                 letterSpacing: Double? = nil,
                 fontFamily: String? = nil,
                 fontStyle: String? = nil,
-                link: ChatLinkStyle? = nil) {
+                link: ChatLinkStyle? = nil,
+                textAlign: String? = nil) {
         self.fontSize = fontSize
         self.fontWeight = fontWeight
         self.lineHeight = lineHeight
@@ -99,6 +104,7 @@ public struct ChatTextStyle {
         self.fontFamily = fontFamily
         self.fontStyle = fontStyle
         self.link = link
+        self.textAlign = textAlign
     }
 
     package func toJSON() -> [String: Any] {
@@ -123,6 +129,9 @@ public struct ChatTextStyle {
         }
         if let link = link {
             json["link"] = link.toJSON()
+        }
+        if let textAlign = textAlign {
+            json["textAlign"] = textAlign
         }
         return json
     }
@@ -243,10 +252,15 @@ public enum FontType: String {
 /// Color settings for chat UI. When useConfiguredStyle is true in AgentChatControllerOptions, these
 /// settings are overridden by server-configured colors.
 ///
-/// Only `assistantBubble`, `userBubble`, `inputPlaceholder`, `disclosure`, and `disclosureLink`
-/// support an alpha component below 1; the chat renders every other color fully opaque.
+/// Only `backgroundColor`, `assistantBubble`, `userBubble`, `inputPlaceholder`, `disclosure`, and
+/// `disclosureLink` support an alpha component below 1; the chat renders every other color fully
+/// opaque.
 public struct ChatStyleColors {
     /// The background color for the chat view.
+    ///
+    /// An alpha component below 1 (including `.clear`) makes the chat composite over whatever the
+    /// app draws behind the chat controller, so a host-owned gradient, image, animation, or solid
+    /// color shows through. The default is the opaque `.systemBackground`.
     public let backgroundColor: UIColor
 
     /// The color of the user input text and default color for assistant messages.
@@ -258,6 +272,13 @@ public struct ChatStyleColors {
     /// The background color of the message input area (the region below the divider
     /// that contains the text input). When nil, falls back to `backgroundColor`.
     public let inputBackground: UIColor?
+
+    /// The color of the message composer's border, drawn when `ChatComposerStyle.borderWidth`
+    /// is set. When nil, falls back to `border`.
+    public let inputBorder: UIColor?
+
+    /// The color of the text the user types in the message input. When nil, falls back to `text`.
+    public let inputText: UIColor?
 
     /// The color of the navigation bar of the chat view
     public let titleBar: UIColor
@@ -288,8 +309,8 @@ public struct ChatStyleColors {
     public let newChatButtonText: UIColor?
 
     /// The color of the placeholder text shown in the message input, also used for the send
-    /// button arrow when the input is empty. When nil, falls back to `text` at reduced opacity;
-    /// when set, its configured opacity is used.
+    /// button arrow when the input is empty. When nil, falls back to `inputText` at reduced
+    /// opacity; when set, its configured opacity is used.
     public let inputPlaceholder: UIColor?
 
     /// The color of the file upload (attachment) button icon in the chat input. When nil,
@@ -348,11 +369,15 @@ public struct ChatStyleColors {
                 humanAgentTransferWaitingText: UIColor = .secondaryLabel,
                 titleBar: UIColor = .systemBackground,
                 titleBarText: UIColor = .label,
-                tintColor: UIColor? = nil) {
+                tintColor: UIColor? = nil,
+                inputBorder: UIColor? = nil,
+                inputText: UIColor? = nil) {
         self.backgroundColor = backgroundColor
         self.text = text
         self.border = border
         self.inputBackground = inputBackground
+        self.inputBorder = inputBorder
+        self.inputText = inputText
         self.assistantBubble = assistantBubble
         self.assistantBubbleText = assistantBubbleText
         self.userBubble = userBubble
@@ -553,6 +578,12 @@ extension ChatStyleColors {
         }
         if let inputBackground = inputBackground {
             json["inputBackground"] = inputBackground.toHex()
+        }
+        if let inputBorder = inputBorder {
+            json["inputBorder"] = inputBorder.toHex()
+        }
+        if let inputText = inputText {
+            json["inputText"] = inputText.toHex()
         }
         if let newChatButton = newChatButton {
             json["newChatButton"] = newChatButton.toHex()

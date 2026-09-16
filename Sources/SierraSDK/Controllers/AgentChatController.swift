@@ -25,6 +25,16 @@ public enum DisclosurePlacement: String {
     case both = "both"
 }
 
+/// Controls where the disclosure sits within the conversation view.
+public enum DisclosurePosition: String {
+    /// Scroll with the conversation transcript.
+    case scrollingInTranscript = "scrollingInTranscript"
+    /// Remain visible above the conversation transcript.
+    case pinnedAboveTranscript = "pinnedAboveTranscript"
+    /// Remain visible below the message composer.
+    case pinnedBelowComposer = "pinnedBelowComposer"
+}
+
 /// Controls when an enabled end-conversation confirmation is shown.
 public enum EndConversationConfirmationMode: String {
     /// Confirm whenever the user ends a conversation.
@@ -209,14 +219,25 @@ public struct AgentChatControllerOptions {
     /// message input area. Defaults to false.
     public var removeInputDivider: Bool = false;
 
+    /// Optional layout overrides for the message composer (insets, height, corner radius,
+    /// border, and action button size). When nil, the composer keeps its default layout.
+    public var composerStyle: ChatComposerStyle? = nil;
+
     /// Whether to show a scroll-to-bottom indicator when the user scrolls up in the chat.
     public var showScrollToBottom: Bool = false;
 
-    /// Pin the disclosure text to the top of the chat frame so that it is visible throughout
-    /// the conversation and never scrolls out of view. This controls where the disclosure sits
-    /// within the conversation view, and has no effect when disclosurePlacement is
-    /// `.conversationList`.
+    /// Retained for backward compatibility. When `disclosurePosition` is `nil`,
+    /// `true` is equivalent to `disclosurePosition = .pinnedAboveTranscript`.
+    /// Has no effect when `disclosurePlacement` is `.conversationList`.
     public var pinDisclosure: Bool = false;
+
+    /// Where the disclosure sits within the conversation view. Defaults to
+    /// `.scrollingInTranscript` unless `pinDisclosure` is `true`.
+    /// This takes precedence over `pinDisclosure`.
+    public var disclosurePosition: DisclosurePosition?
+
+    /// Hide the conversation disclosure while waiting for or speaking with a live agent.
+    public var hideDisclosureDuringLiveChat: Bool = false
 
     /// Which view(s) the disclosure text is displayed in. Defaults to `.conversation`.
     public var disclosurePlacement: DisclosurePlacement = .conversation
@@ -491,12 +512,24 @@ extension AgentChatControllerOptions {
             queryItems.append(URLQueryItem(name: "removeInputDivider", value: "true"))
         }
 
+        if let composerStyleJSON = composerStyle?.toJSONString() {
+            queryItems.append(URLQueryItem(name: "composerStyle", value: composerStyleJSON))
+        }
+
         if showScrollToBottom {
             queryItems.append(URLQueryItem(name: "showScrollToBottom", value: "true"))
         }
 
         if pinDisclosure {
             queryItems.append(URLQueryItem(name: "pinDisclosure", value: "true"))
+        }
+
+        if let disclosurePosition {
+            queryItems.append(URLQueryItem(name: "disclosurePosition", value: disclosurePosition.rawValue))
+        }
+
+        if hideDisclosureDuringLiveChat {
+            queryItems.append(URLQueryItem(name: "hideDisclosureDuringLiveChat", value: "true"))
         }
 
         if disclosurePlacement != .conversation {
@@ -730,8 +763,6 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
         applyAppBoundDomainsConfig(configuration)
         webView = CustomWebView(frame: .zero, configuration: configuration)
-        webView.backgroundColor = options.chatStyle.colors.backgroundColor
-        webView.isOpaque = true
 
         // Make the content invisible until fully loaded
         webView.scrollView.alpha = 0.0
@@ -751,7 +782,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
         webView.navigationDelegate = self
         webView.customUserAgent = getUserAgent(isWebView: true)
-        webView.scrollView.backgroundColor = options.chatStyle.colors.backgroundColor
+        applyChatBackgroundColor()
         webView.scrollView.keyboardDismissMode = .interactive
 
 #if targetEnvironment(simulator)
@@ -761,10 +792,37 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 #endif
     }
 
+    /// The native loading color. The web embed owns server-configured and translucent backgrounds.
+    /// A local color that cannot be read as RGBA stays opaque for backward compatibility.
+    private var nativeChatBackgroundColor: UIColor {
+        chatBackgroundIsOpaque ? options.chatStyle.colors.backgroundColor : .clear
+    }
+
+    /// Re-read after an appearance change rather than cached: a dynamic color can be opaque in one
+    /// appearance and translucent in the other.
+    private var chatBackgroundIsOpaque: Bool {
+        guard !options.useConfiguredStyle else { return false }
+        let background = options.chatStyle.colors.backgroundColor
+        return (background.rgbaComponents(using: traitCollection)?.alpha ?? 1) >= 1
+    }
+
+    private func applyChatBackgroundColor() {
+        let nativeBackground = nativeChatBackgroundColor
+        // Without this, WebKit paints an opaque backdrop over the app's content.
+        webView.isOpaque = chatBackgroundIsOpaque
+        webView.backgroundColor = nativeBackground
+        webView.scrollView.backgroundColor = nativeBackground
+        // Fills the rubber-band area beyond the page, which the web embed does not paint.
+        webView.underPageBackgroundColor = options.useConfiguredStyle
+            ? .clear
+            : options.chatStyle.colors.backgroundColor
+        viewIfLoaded?.backgroundColor = nativeBackground
+    }
+
     public override func loadView() {
         // Create a container view to hold the webview with keyboard layout guide constraints
         let containerView = UIView()
-        containerView.backgroundColor = options.chatStyle.colors.backgroundColor
+        containerView.backgroundColor = nativeChatBackgroundColor
 
         // Add webview to container
         webView.translatesAutoresizingMaskIntoConstraints = false
@@ -820,9 +878,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
         // Update native UI elements for the new appearance
         updateNavigationBarAppearance()
-        view.backgroundColor = options.chatStyle.colors.backgroundColor
-        webView.backgroundColor = options.chatStyle.colors.backgroundColor
-        webView.scrollView.backgroundColor = options.chatStyle.colors.backgroundColor
+        applyChatBackgroundColor()
 
         // Reload the WebView with updated color values. This restarts the spinner, which
         // re-resolves its color for the new appearance.

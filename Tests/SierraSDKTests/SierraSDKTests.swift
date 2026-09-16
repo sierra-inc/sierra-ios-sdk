@@ -1,6 +1,7 @@
 // Copyright Sierra
 
 import UIKit
+import WebKit
 import XCTest
 @testable import SierraSDK
 @testable import SierraSDKVoice
@@ -881,6 +882,25 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(items.first?.value, "liveChat")
     }
 
+    func testDisclosureBehaviorIsForwardedAsQueryItems() {
+        var options = AgentChatControllerOptions(name: "Test")
+        XCTAssertNil(options.disclosurePosition)
+        XCTAssertFalse(options.hideDisclosureDuringLiveChat)
+
+        options.disclosurePosition = .pinnedBelowComposer
+        options.hideDisclosureDuringLiveChat = true
+        let items = options.toQueryItems()
+
+        XCTAssertEqual(
+            items.first { $0.name == "disclosurePosition" }?.value,
+            "pinnedBelowComposer"
+        )
+        XCTAssertEqual(
+            items.first { $0.name == "hideDisclosureDuringLiveChat" }?.value,
+            "true"
+        )
+    }
+
     func testAddAgentTagsOptionsJSONIncludesOnlyConfiguredValues() {
         let options = AddAgentTagsOptions(dev: true, omitPresent: nil, customField: false)
 
@@ -962,6 +982,83 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(json["background"], "#336699")
         XCTAssertEqual(json["userBubble"], "#336699CC")
         XCTAssertEqual(json["assistantBubble"], "#33669900")
+    }
+
+    @MainActor
+    func testWebViewOpacityFollowsConfiguredChatBackgroundAlpha() throws {
+        let cases: [(name: String, background: UIColor, isOpaque: Bool)] = [
+            ("opaque", UIColor(red: 1, green: 1, blue: 1, alpha: 1), true),
+            ("translucent", UIColor(red: 1, green: 1, blue: 1, alpha: 0.5), false),
+            ("transparent", .clear, false),
+        ]
+
+        for (name, background, expectedIsOpaque) in cases {
+            let controller = makeChatController(background: background)
+            controller.loadViewIfNeeded()
+            let webView = try XCTUnwrap(findWebView(in: controller.view))
+
+            XCTAssertEqual(webView.isOpaque, expectedIsOpaque, "isOpaque for a \(name) background")
+            // A non-opaque background is painted once by the web embed on its own root.
+            let expectedNativeBackground: UIColor = expectedIsOpaque ? background : .clear
+            XCTAssertEqual(webView.backgroundColor, expectedNativeBackground, "web view background for a \(name) background")
+            XCTAssertEqual(controller.view.backgroundColor, expectedNativeBackground, "container background for a \(name) background")
+            // The over-scroll area is outside the page, so it keeps the configured alpha. WebKit
+            // round-trips the color through 8-bit sRGB, so compare within one channel step.
+            XCTAssertEqual(
+                try XCTUnwrap(webView.underPageBackgroundColor).cgColor.alpha,
+                background.cgColor.alpha,
+                accuracy: 1 / 255,
+                "underPageBackgroundColor for a \(name) background"
+            )
+        }
+    }
+
+    @MainActor
+    func testWebViewOpacityIsReappliedAfterAppearanceChange() throws {
+        // Opaque in light mode, transparent in dark mode: the controller has to resolve the
+        // dynamic color against the active appearance instead of once when it is created.
+        let background = UIColor { $0.userInterfaceStyle == .dark ? .clear : .white }
+        let controller = makeChatController(background: background)
+        controller.overrideUserInterfaceStyle = .light
+        controller.loadViewIfNeeded()
+        let webView = try XCTUnwrap(findWebView(in: controller.view))
+        XCTAssertTrue(webView.isOpaque, "an opaque light-mode background must keep the web view opaque")
+
+        controller.overrideUserInterfaceStyle = .dark
+
+        XCTAssertFalse(webView.isOpaque, "a transparent dark-mode background must clear isOpaque")
+        XCTAssertEqual(webView.backgroundColor, .clear)
+    }
+
+    @MainActor
+    func testServerConfiguredStyleLeavesNativeBackgroundsTransparent() throws {
+        let controller = makeChatController(background: .white, useConfiguredStyle: true)
+        controller.loadViewIfNeeded()
+        let webView = try XCTUnwrap(findWebView(in: controller.view))
+
+        XCTAssertFalse(webView.isOpaque)
+        XCTAssertEqual(try XCTUnwrap(webView.backgroundColor).cgColor.alpha, 0)
+        XCTAssertEqual(try XCTUnwrap(webView.scrollView.backgroundColor).cgColor.alpha, 0)
+        XCTAssertEqual(try XCTUnwrap(webView.underPageBackgroundColor).cgColor.alpha, 0)
+        XCTAssertEqual(try XCTUnwrap(controller.view.backgroundColor).cgColor.alpha, 0)
+    }
+
+    @MainActor
+    private func makeChatController(
+        background: UIColor,
+        useConfiguredStyle: Bool = false
+    ) -> AgentChatController {
+        var options = AgentChatControllerOptions(name: "Test")
+        options.useConfiguredStyle = useConfiguredStyle
+        options.chatStyle = ChatStyle(colors: ChatStyleColors(backgroundColor: background))
+        return AgentChatController(agent: Agent(config: AgentConfig(token: "test-token")), options: options)
+    }
+
+    private func findWebView(in view: UIView) -> WKWebView? {
+        if let webView = view as? WKWebView {
+            return webView
+        }
+        return view.subviews.lazy.compactMap(findWebView).first
     }
 
     @MainActor
