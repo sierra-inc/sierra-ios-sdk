@@ -252,7 +252,7 @@ public enum FontType: String {
 /// Color settings for chat UI. When useConfiguredStyle is true in AgentChatControllerOptions, these
 /// settings are overridden by server-configured colors.
 ///
-/// Only `backgroundColor`, `assistantBubble`, `userBubble`, `inputPlaceholder`, `disclosure`, and
+/// Only `backgroundColor`, `assistantBubble`, `humanAgentBubble`, `userBubble`, `inputPlaceholder`, `disclosure`, and
 /// `disclosureLink` support an alpha component below 1; the chat renders every other color fully
 /// opaque.
 public struct ChatStyleColors {
@@ -332,6 +332,13 @@ public struct ChatStyleColors {
     /// The color of links in chat bubbles for messages from the AI assistant.
     public let assistantBubbleLink: UIColor?
 
+    /// Human-agent bubble background. Defaults to `assistantBubble`, including opacity.
+    public let humanAgentBubble: UIColor?
+    /// Human-agent bubble text color. Defaults to `assistantBubbleText`.
+    public let humanAgentBubbleText: UIColor?
+    /// Human-agent bubble link color. Defaults to `assistantBubbleLink`.
+    public let humanAgentBubbleLink: UIColor?
+
     /// The color of the optional disclosure text that appears before any chat messages.
     @available(*, deprecated)
     public let disclosureText: UIColor
@@ -371,7 +378,10 @@ public struct ChatStyleColors {
                 titleBarText: UIColor = .label,
                 tintColor: UIColor? = nil,
                 inputBorder: UIColor? = nil,
-                inputText: UIColor? = nil) {
+                inputText: UIColor? = nil,
+                humanAgentBubble: UIColor? = nil,
+                humanAgentBubbleText: UIColor? = nil,
+                humanAgentBubbleLink: UIColor? = nil) {
         self.backgroundColor = backgroundColor
         self.text = text
         self.border = border
@@ -390,6 +400,9 @@ public struct ChatStyleColors {
         self.disclosureLink = disclosureLink
         self.userBubbleLink = userBubbleLink
         self.assistantBubbleLink = assistantBubbleLink
+        self.humanAgentBubble = humanAgentBubble
+        self.humanAgentBubbleText = humanAgentBubbleText
+        self.humanAgentBubbleLink = humanAgentBubbleLink
         self.disclosureText = disclosureText
         self.errorText = errorText
         self.statusText = humanAgentTransferWaitingText
@@ -608,6 +621,15 @@ extension ChatStyleColors {
         }
         if let assistantBubbleLink = assistantBubbleLink {
             json["assistantBubbleLink"] = assistantBubbleLink.toHex()
+        }
+        if let humanAgentBubble = humanAgentBubble {
+            json["humanAgentBubble"] = humanAgentBubble.toHex()
+        }
+        if let humanAgentBubbleText = humanAgentBubbleText {
+            json["humanAgentBubbleText"] = humanAgentBubbleText.toHex()
+        }
+        if let humanAgentBubbleLink = humanAgentBubbleLink {
+            json["humanAgentBubbleLink"] = humanAgentBubbleLink.toHex()
         }
         return json
     }

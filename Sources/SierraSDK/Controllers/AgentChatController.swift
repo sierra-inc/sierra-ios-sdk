@@ -198,6 +198,10 @@ public struct AgentChatControllerOptions {
     /// agent's transfer waiting message takes precedence when the agent has it enabled. Only
     /// effective when `canEndConversation` is true.
     public var footerEndConversationButton: Bool = false;
+    /// Optional style for the input-area end conversation button.
+    public var footerEndConversationButtonStyle: ChatButtonStyle? = nil
+    /// Optional text-message action above the composer.
+    public var messageInputPresetAction: MessageInputPresetAction? = nil
 
     /// If set to true, indicates the app uses a custom action bar and the SDK should not show
     /// its native end conversation button, even when canEndConversation is true. The end
@@ -222,6 +226,11 @@ public struct AgentChatControllerOptions {
     /// Optional layout overrides for the message composer (insets, height, corner radius,
     /// border, and action button size). When nil, the composer keeps its default layout.
     public var composerStyle: ChatComposerStyle? = nil;
+    /// Layout of the ended message and its optional new-conversation action.
+    public var conversationEndedStyle: ChatConversationEndedStyle? = nil;
+
+    /// Style overrides for inline end-conversation confirmation. Nil keeps the default style.
+    public var endConversationConfirmationStyle: EndConversationConfirmationStyle? = nil;
 
     /// Whether to show a scroll-to-bottom indicator when the user scrolls up in the chat.
     public var showScrollToBottom: Bool = false;
@@ -499,6 +508,12 @@ extension AgentChatControllerOptions {
         if footerEndConversationButton {
             queryItems.append(URLQueryItem(name: "footerEndConversationButton", value: "true"))
         }
+        if let value = footerEndConversationButtonStyle?.toJSONString() {
+            queryItems.append(URLQueryItem(name: "footerEndConversationButtonStyle", value: value))
+        }
+        if let value = messageInputPresetAction?.toJSONString() {
+            queryItems.append(URLQueryItem(name: "messageInputPresetAction", value: value))
+        }
 
         if canStartNewChat {
             queryItems.append(URLQueryItem(name: "canStartNewChat", value: "true"))
@@ -514,6 +529,12 @@ extension AgentChatControllerOptions {
 
         if let composerStyleJSON = composerStyle?.toJSONString() {
             queryItems.append(URLQueryItem(name: "composerStyle", value: composerStyleJSON))
+        }
+        if let styleJSON = endConversationConfirmationStyle?.toJSONString() {
+            queryItems.append(URLQueryItem(name: "endConversationConfirmationStyle", value: styleJSON))
+        }
+        if let styleJSON = conversationEndedStyle?.toJSONString() {
+            queryItems.append(URLQueryItem(name: "conversationEndedStyle", value: styleJSON))
         }
 
         if showScrollToBottom {

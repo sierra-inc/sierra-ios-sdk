@@ -99,4 +99,13 @@ final class ChatComposerStyleTests: XCTestCase {
         XCTAssertEqual(serialized["inputBorder"] ?? nil, UIColor.black.toHex())
         XCTAssertEqual(serialized["inputText"] ?? nil, UIColor.white.toHex())
     }
+
+    func testHumanAgentColorsUseEmbedKeys() {
+        let colors = ChatStyleColors(humanAgentBubble: .clear, humanAgentBubbleText: .black, humanAgentBubbleLink: .blue)
+        let serialized = colors.toJSON()
+        XCTAssertEqual(serialized["humanAgentBubble"] ?? nil, UIColor.clear.toHex())
+        XCTAssertEqual(serialized["humanAgentBubbleText"] ?? nil, UIColor.black.toHex())
+        XCTAssertEqual(serialized["humanAgentBubbleLink"] ?? nil, UIColor.blue.toHex())
+        XCTAssertNil(ChatStyleColors().toJSON()["humanAgentBubble"])
+    }
 }
