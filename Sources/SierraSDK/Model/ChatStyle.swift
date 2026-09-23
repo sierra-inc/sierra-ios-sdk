@@ -252,9 +252,10 @@ public enum FontType: String {
 /// Color settings for chat UI. When useConfiguredStyle is true in AgentChatControllerOptions, these
 /// settings are overridden by server-configured colors.
 ///
-/// Only `backgroundColor`, `assistantBubble`, `humanAgentBubble`, `userBubble`, `inputPlaceholder`, `disclosure`, and
-/// `disclosureLink` support an alpha component below 1; the chat renders every other color fully
-/// opaque.
+/// Only `backgroundColor`, `assistantBubble`, `humanAgentBubble`, `userBubble`,
+/// `assistantBubbleBorder`, `humanAgentBubbleBorder`, `userBubbleBorder`, `inputPlaceholder`,
+/// `disclosure`, and `disclosureLink` support an alpha component below 1; the chat renders every
+/// other color fully opaque.
 public struct ChatStyleColors {
     /// The background color for the chat view.
     ///
@@ -332,12 +333,20 @@ public struct ChatStyleColors {
     /// The color of links in chat bubbles for messages from the AI assistant.
     public let assistantBubbleLink: UIColor?
 
+    /// The border color for AI assistant chat bubbles. When nil, no border is drawn.
+    public let assistantBubbleBorder: UIColor?
+
+    /// The border color for user chat bubbles. When nil, no border is drawn.
+    public let userBubbleBorder: UIColor?
+
     /// Human-agent bubble background. Defaults to `assistantBubble`, including opacity.
     public let humanAgentBubble: UIColor?
     /// Human-agent bubble text color. Defaults to `assistantBubbleText`.
     public let humanAgentBubbleText: UIColor?
     /// Human-agent bubble link color. Defaults to `assistantBubbleLink`.
     public let humanAgentBubbleLink: UIColor?
+    /// Human-agent bubble border color. Defaults to `assistantBubbleBorder`.
+    public let humanAgentBubbleBorder: UIColor?
 
     /// The color of the optional disclosure text that appears before any chat messages.
     @available(*, deprecated)
@@ -357,7 +366,7 @@ public struct ChatStyleColors {
 
     public init(backgroundColor: UIColor = .systemBackground,
                 text: UIColor? = .label,
-                border: UIColor? = .separator,
+                border: UIColor? = .opaqueSeparator,
                 inputBackground: UIColor? = nil,
                 assistantBubble: UIColor = .systemGray6,
                 assistantBubbleText: UIColor = .label,
@@ -381,7 +390,10 @@ public struct ChatStyleColors {
                 inputText: UIColor? = nil,
                 humanAgentBubble: UIColor? = nil,
                 humanAgentBubbleText: UIColor? = nil,
-                humanAgentBubbleLink: UIColor? = nil) {
+                humanAgentBubbleLink: UIColor? = nil,
+                assistantBubbleBorder: UIColor? = nil,
+                userBubbleBorder: UIColor? = nil,
+                humanAgentBubbleBorder: UIColor? = nil) {
         self.backgroundColor = backgroundColor
         self.text = text
         self.border = border
@@ -400,9 +412,12 @@ public struct ChatStyleColors {
         self.disclosureLink = disclosureLink
         self.userBubbleLink = userBubbleLink
         self.assistantBubbleLink = assistantBubbleLink
+        self.assistantBubbleBorder = assistantBubbleBorder
+        self.userBubbleBorder = userBubbleBorder
         self.humanAgentBubble = humanAgentBubble
         self.humanAgentBubbleText = humanAgentBubbleText
         self.humanAgentBubbleLink = humanAgentBubbleLink
+        self.humanAgentBubbleBorder = humanAgentBubbleBorder
         self.disclosureText = disclosureText
         self.errorText = errorText
         self.statusText = humanAgentTransferWaitingText
@@ -622,6 +637,12 @@ extension ChatStyleColors {
         if let assistantBubbleLink = assistantBubbleLink {
             json["assistantBubbleLink"] = assistantBubbleLink.toHex()
         }
+        if let assistantBubbleBorder = assistantBubbleBorder {
+            json["assistantBubbleBorder"] = assistantBubbleBorder.toHex()
+        }
+        if let userBubbleBorder = userBubbleBorder {
+            json["userBubbleBorder"] = userBubbleBorder.toHex()
+        }
         if let humanAgentBubble = humanAgentBubble {
             json["humanAgentBubble"] = humanAgentBubble.toHex()
         }
@@ -630,6 +651,9 @@ extension ChatStyleColors {
         }
         if let humanAgentBubbleLink = humanAgentBubbleLink {
             json["humanAgentBubbleLink"] = humanAgentBubbleLink.toHex()
+        }
+        if let humanAgentBubbleBorder = humanAgentBubbleBorder {
+            json["humanAgentBubbleBorder"] = humanAgentBubbleBorder.toHex()
         }
         return json
     }

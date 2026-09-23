@@ -7,6 +7,12 @@ import XCTest
 @testable import SierraSDKVoice
 
 final class SierraSDKTests: XCTestCase {
+    private func brandJSON(_ options: AgentChatControllerOptions) throws -> [String: Any] {
+        let value = try XCTUnwrap(options.toQueryItems().first { $0.name == "brand" }?.value)
+        let data = try XCTUnwrap(value.data(using: .utf8))
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
     func testAgentVoiceControllerOptionsCompactControlsAreOptIn() {
         var options = AgentVoiceControllerOptions(name: "Voice")
 
@@ -882,6 +888,20 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(items.first?.value, "liveChat")
     }
 
+    func testInitialUserMessageFrequencyDefaultsToEveryConversationAndForwardsOptIn() {
+        var options = AgentChatControllerOptions(name: "Test")
+        XCTAssertEqual(options.initialUserMessageFrequency, .everyConversation)
+        XCTAssertFalse(
+            options.toQueryItems().contains { $0.name == "initialUserMessageFrequency" }
+        )
+
+        options.initialUserMessageFrequency = .oncePerChatInstance
+        let items = options.toQueryItems().filter { $0.name == "initialUserMessageFrequency" }
+
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.first?.value, "oncePerChatInstance")
+    }
+
     func testDisclosureBehaviorIsForwardedAsQueryItems() {
         var options = AgentChatControllerOptions(name: "Test")
         XCTAssertNil(options.disclosurePosition)
@@ -982,6 +1002,29 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(json["background"], "#336699")
         XCTAssertEqual(json["userBubble"], "#336699CC")
         XCTAssertEqual(json["assistantBubble"], "#33669900")
+    }
+
+    func testChatStyleColorsSerializesBubbleBorders() {
+        let colors = ChatStyleColors(
+            assistantBubbleBorder: UIColor(red: 1, green: 0, blue: 0, alpha: 0.8),
+            userBubbleBorder: UIColor(red: 0, green: 1, blue: 0, alpha: 0.4),
+            humanAgentBubbleBorder: UIColor(red: 0, green: 0, blue: 1, alpha: 0)
+        )
+
+        let json = colors.toJSON()
+        XCTAssertEqual(json["assistantBubbleBorder"], "#FF0000CC")
+        XCTAssertEqual(json["userBubbleBorder"], "#00FF0066")
+        XCTAssertEqual(json["humanAgentBubbleBorder"], "#0000FF00")
+    }
+
+    func testBubbleTailOptionIsForwardedInBrandOnlyWhenConfigured() throws {
+        var options = AgentChatControllerOptions(name: "Test")
+        var brand = try XCTUnwrap(brandJSON(options))
+        XCTAssertNil(brand["hideBubbleTails"])
+
+        options.hideBubbleTails = false
+        brand = try XCTUnwrap(brandJSON(options))
+        XCTAssertEqual(brand["hideBubbleTails"] as? Bool, false)
     }
 
     @MainActor

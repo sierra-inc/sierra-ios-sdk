@@ -16,20 +16,25 @@ public struct ChatConversationEndedStyle {
     public let actionSpacing: CGFloat?
     /// Style of this conversation's new-chat button, separate from the list button.
     public let newChatButtonStyle: ChatButtonStyle?
+    /// Show the conversation disclosure after the conversation ends. Defaults to true.
+    public let showDisclosure: Bool?
 
     public init(messageAlignment: MessageAlignment? = nil,
                 showComposerContainer: Bool? = nil,
                 actionSpacing: CGFloat? = nil,
-                newChatButtonStyle: ChatButtonStyle? = nil) {
+                newChatButtonStyle: ChatButtonStyle? = nil,
+                showDisclosure: Bool? = nil) {
         self.messageAlignment = messageAlignment
         self.showComposerContainer = showComposerContainer
         self.actionSpacing = actionSpacing
         self.newChatButtonStyle = newChatButtonStyle
+        self.showDisclosure = showDisclosure
     }
 
     package func toJSONString() -> String? {
         var json: [String: Any] = [:]
         if let messageAlignment { json["messageAlignment"] = messageAlignment.rawValue }
+        if let showDisclosure { json["showDisclosure"] = showDisclosure }
         if let showComposerContainer { json["showComposerContainer"] = showComposerContainer }
         if let actionSpacing, actionSpacing.isFinite { json["actionSpacing"] = actionSpacing }
         if let newChatButtonStyle {

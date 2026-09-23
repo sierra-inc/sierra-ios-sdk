@@ -43,6 +43,14 @@ public enum EndConversationConfirmationMode: String {
     case liveChat = "liveChat"
 }
 
+/// Controls how often the initial user message is sent.
+public enum InitialUserMessageFrequency: String {
+    /// Send the message when every new conversation starts.
+    case everyConversation
+    /// Send the message only for the first new conversation in this controller instance.
+    case oncePerChatInstance
+}
+
 /// Controls the text direction of the chat interface.
 public enum TextDirection: String {
     /// Left-to-right layout (default).
@@ -265,6 +273,9 @@ public struct AgentChatControllerOptions {
     /// true, the server-configured value is used.
     public var showAvatars: Bool?
 
+    /// Whether to hide all chat bubble tails. When nil, the server-configured value is used.
+    public var hideBubbleTails: Bool?
+
     /// HTTPS URL of an image to show next to virtual agent messages when showAvatars is enabled.
     /// Values are trimmed and must be 2048 characters or fewer. When nil and useConfiguredStyle is
     /// true, the server-configured value is used.
@@ -308,8 +319,13 @@ public struct AgentChatControllerOptions {
     /// File name for the generated transcript file.
     public var transcriptFileName: String = "Transcript"
 
-    /// Message that will be automatically sent from the user when the conversation starts.
+    /// Message sent from the customer when a conversation starts. This property has no effect when
+    /// the agent enables the `start` client event, which runs for every new conversation.
     public var initialUserMessage: String?
+
+    /// Controls how often `initialUserMessage` is sent. Defaults to every new conversation.
+    /// `oncePerChatInstance` resets when the controller is recreated.
+    public var initialUserMessageFrequency: InitialUserMessageFrequency = .everyConversation
 
     /// A signed JWT that identifies the end user for this session. When set, the token is
     /// forwarded to the server on every chat request for identity resolution. The server
@@ -414,6 +430,7 @@ extension AgentChatControllerOptions {
         if let showTimestamps { brand["showTimestamps"] = showTimestamps }
         if let showSpeakerLabels { brand["showBotName"] = showSpeakerLabels }
         if let showAvatars { brand["showAvatars"] = showAvatars }
+        if let hideBubbleTails { brand["hideBubbleTails"] = hideBubbleTails }
         if let agentAvatarURL { brand["agentAvatarURL"] = agentAvatarURL }
         if let sendButtonSVG { brand["sendButtonSVG"] = sendButtonSVG }
         if let sendButtonDisabledSVG { brand["sendButtonDisabledSVG"] = sendButtonDisabledSVG }
@@ -563,6 +580,15 @@ extension AgentChatControllerOptions {
 
         if let initialUserMessage = initialUserMessage, !initialUserMessage.isEmpty {
             queryItems.append(URLQueryItem(name: "initialUserMessage", value: initialUserMessage))
+        }
+
+        if initialUserMessageFrequency == .oncePerChatInstance {
+            queryItems.append(
+                URLQueryItem(
+                    name: "initialUserMessageFrequency",
+                    value: initialUserMessageFrequency.rawValue
+                )
+            )
         }
 
         if useConfiguredChatStrings {
