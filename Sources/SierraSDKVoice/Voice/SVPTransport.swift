@@ -80,7 +80,8 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         if let oauthAccessToken = config.oauthAccessToken, !oauthAccessToken.isEmpty {
             request.setValue("Bearer \(oauthAccessToken)", forHTTPHeaderField: "Authorization")
             request.setValue("2", forHTTPHeaderField: "X-Sierra-Token-Version")
-        } else if let apiToken = config.headlessAPIToken, !apiToken.isEmpty {
+        } else if let apiToken = config.svpHeadlessAPIToken, !apiToken.isEmpty {
+            debugLog("SierraSDK: headlessAPIToken is deprecated. If you use a Headless API token, fetch it from your backend at runtime instead of shipping it in the app binary. Prefer oauthAccessToken.")
             request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
         }
         return request

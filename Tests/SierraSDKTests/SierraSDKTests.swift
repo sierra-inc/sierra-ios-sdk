@@ -27,7 +27,7 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(config.token, "test-token")
         XCTAssertNil(config.target)
         XCTAssertEqual(config.persistence, .memory)
-        XCTAssertNil(config.headlessAPIToken)
+        XCTAssertNil(config.svpHeadlessAPIToken)
         XCTAssertNil(config.oauthAccessToken)
     }
 
@@ -58,6 +58,8 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(hostedItems.first { $0.name == "supportsFullscreen" }?.value, "true")
     }
 
+    // Exercises the deprecated headlessAPIToken path that shipped apps still use.
+    @available(*, deprecated)
     func testSVPTransportUsesOAuthAuthorizationHeadersBeforeHeadlessToken() throws {
         let config = AgentConfig(
             token: "test-token",
@@ -73,6 +75,8 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertNil(request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol"))
     }
 
+    // Exercises the deprecated headlessAPIToken path that shipped apps still use.
+    @available(*, deprecated)
     func testSVPTransportFallsBackToHeadlessToken() throws {
         let config = AgentConfig(token: "test-token", headlessAPIToken: "headless-token")
         let transport = SVPTransport(config: config)

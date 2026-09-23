@@ -101,7 +101,8 @@ public struct AgentChatControllerOptions {
     public var useConfiguredChatStrings: Bool = false
 
     /// Use styling configured on the server (colors, typography, logo, etc.).
-    /// When enabled, server-configured styles take precedence over local chatStyle.
+    /// When enabled, non-empty server-configured style fields take precedence over the corresponding
+    /// local fields. Local values remain as fallbacks.
     ///
     /// Note: iOS hides the title bar in the web view by default and uses the native UINavigationBar
     /// instead. The native navigation bar colors are still configured via chatStyle.colors.titleBar
@@ -178,14 +179,21 @@ public struct AgentChatControllerOptions {
     public var chatStyle: ChatStyle = DEFAULT_CHAT_STYLE
 
     /// Inline SVG markup for the chat send button. Replaces the default send arrow (including
-    /// its background) when provided. Overridden by the server-configured value if useConfiguredStyle
-    /// is true.
+    /// its background) when provided. When both the SDK and server provide a value, the
+    /// server-configured value takes precedence if useConfiguredStyle is true.
     public var sendButtonSVG: String?
 
     /// Inline SVG markup for the send button when it is disabled (e.g. the input is empty).
-    /// Falls back to sendButtonSVG when not provided. Overridden by the server-configured value
-    /// if useConfiguredStyle is true.
+    /// Falls back to sendButtonSVG when not provided. When both the SDK and server provide a value,
+    /// the server-configured value takes precedence if useConfiguredStyle is true.
     public var sendButtonDisabledSVG: String?
+
+    /// Inline SVG markup for the file upload button icon. Replaces only the default
+    /// photo/paperclip glyph; the button keeps its behavior and accessible label. Paths that use
+    /// `currentColor` (or omit a fill) take chatStyle.colors.uploadButtonIcon; explicit SVG colors
+    /// win. When both the SDK and server provide a value, the server-configured value takes
+    /// precedence if useConfiguredStyle is true.
+    public var uploadButtonIconSVG: String?
 
     /// If set to true user will be able to save a conversation transcript via a menu item.
     public var canSaveTranscript: Bool = false;
@@ -259,31 +267,33 @@ public struct AgentChatControllerOptions {
     /// Which view(s) the disclosure text is displayed in. Defaults to `.conversation`.
     public var disclosurePlacement: DisclosurePlacement = .conversation
 
-    /// Whether to show timestamps on chat messages. When nil and useConfiguredStyle is true, the
-    /// server-configured value is used.
+    /// Whether to show timestamps on chat messages. When useConfiguredStyle is true, a non-default
+    /// server-configured value takes precedence over this local value.
     public var showTimestamps: Bool?
 
-    /// Whether to show speaker labels (e.g. the agent name) on chat messages. When nil and
-    /// useConfiguredStyle is true, the server-configured value is used.
+    /// Whether to show speaker labels (e.g. the agent name) on chat messages. When
+    /// useConfiguredStyle is true, a non-default server-configured value takes precedence over this
+    /// local value.
     public var showSpeakerLabels: Bool?
 
     /// Whether to show per-message avatars for agents. When enabled, the chat shows avatars next to
     /// live agent messages using image URLs provided by the contact center. If agentAvatarURL is also
-    /// set, that image is shown next to virtual agent messages. When nil and useConfiguredStyle is
-    /// true, the server-configured value is used.
+    /// set, that image is shown next to virtual agent messages. When useConfiguredStyle is true, a
+    /// non-default server-configured value takes precedence over this local value.
     public var showAvatars: Bool?
 
-    /// Whether to hide all chat bubble tails. When nil, the server-configured value is used.
+    /// Whether to hide all chat bubble tails. When useConfiguredStyle is true, a non-default
+    /// server-configured value takes precedence over this local value.
     public var hideBubbleTails: Bool?
 
     /// HTTPS URL of an image to show next to virtual agent messages when showAvatars is enabled.
-    /// Values are trimmed and must be 2048 characters or fewer. When nil and useConfiguredStyle is
-    /// true, the server-configured value is used.
+    /// Values are trimmed and must be 2048 characters or fewer. When useConfiguredStyle is true, a
+    /// non-empty server-configured value takes precedence over this local value.
     public var agentAvatarURL: String?
 
     /// Controls whether the message label (speaker name and timestamp) is shown above or below chat
-    /// message bubbles. When `.default` and useConfiguredStyle is true, the server-configured
-    /// value is used.
+    /// message bubbles. When useConfiguredStyle is true, a non-default server-configured value takes
+    /// precedence over this local value.
     public var messageLabelPlacement: MessageLabelPlacement = .default
 
     /// Whether chat interface strings (button labels, tooltips, etc.) and text direction are
@@ -434,6 +444,7 @@ extension AgentChatControllerOptions {
         if let agentAvatarURL { brand["agentAvatarURL"] = agentAvatarURL }
         if let sendButtonSVG { brand["sendButtonSVG"] = sendButtonSVG }
         if let sendButtonDisabledSVG { brand["sendButtonDisabledSVG"] = sendButtonDisabledSVG }
+        if let uploadButtonIconSVG { brand["uploadButtonIconSVG"] = uploadButtonIconSVG }
         // If locale auto-detect or server-configured chat strings are enabled, remove any messages
         // that are set to their default value so server-configured values or locale defaults can win.
         if shouldOmitDefaultChatStrings {

@@ -9,27 +9,45 @@ public struct AgentConfig: Equatable {
     public let target: String?
     public var apiHost: AgentAPIHost = .prod
     public var persistence: PersistenceMode = .memory
-    /// Headless API token used for SVP voice connections. Set either this or `oauthAccessToken`,
-    /// never both. Not needed for chat.
-    public var headlessAPIToken: String?
+    /// Headless API token used for SVP voice connections. Not needed for chat.
+    ///
+    /// Deprecated: prefer `oauthAccessToken`. If you use a Headless API token, fetch it from your
+    /// backend at runtime instead of shipping it in the app binary, so you can rotate it without
+    /// an app release.
+    @available(*, deprecated, message: "If you use a Headless API token, fetch it from your backend at runtime instead of shipping it in the app binary. Prefer oauthAccessToken.")
+    public var headlessAPIToken: String? {
+        get { svpHeadlessAPIToken }
+        set { svpHeadlessAPIToken = newValue }
+    }
 
-    /// Short-lived OAuth access token with the Voice scope used for SVP voice connections. Set
-    /// either this or `headlessAPIToken`, never both. Have your backend exchange the OAuth client
-    /// configured in Agent Studio; do not embed its secret.
+    package var svpHeadlessAPIToken: String?
+
+    /// Short-lived OAuth access token with the Voice scope used for SVP voice connections. Have
+    /// your backend exchange the OAuth client configured in Agent Studio; do not embed its secret.
     public var oauthAccessToken: String?
 
     public init(
         token: String,
         target: String? = nil,
         persistence: PersistenceMode = .memory,
-        headlessAPIToken: String? = nil,
         oauthAccessToken: String? = nil
     ) {
         self.token = token
         self.target = target
         self.persistence = persistence
-        self.headlessAPIToken = headlessAPIToken
         self.oauthAccessToken = oauthAccessToken
+    }
+
+    @available(*, deprecated, message: "If you use a Headless API token, fetch it from your backend at runtime instead of shipping it in the app binary. Prefer oauthAccessToken.")
+    public init(
+        token: String,
+        target: String? = nil,
+        persistence: PersistenceMode = .memory,
+        headlessAPIToken: String?,
+        oauthAccessToken: String? = nil
+    ) {
+        self.init(token: token, target: target, persistence: persistence, oauthAccessToken: oauthAccessToken)
+        self.svpHeadlessAPIToken = headlessAPIToken
     }
 
     var url: String {
