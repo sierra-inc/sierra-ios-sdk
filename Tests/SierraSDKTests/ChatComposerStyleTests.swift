@@ -93,10 +93,11 @@ final class ChatComposerStyleTests: XCTestCase {
     }
 
     func testComposerColorsSerializeAlongsideTheGlobalColors() throws {
-        let colors = ChatStyleColors(inputBorder: .black, inputText: .white)
+        let colors = ChatStyleColors(inputBorder: .black, inputText: .white, inputFocusBorder: .blue)
 
         let serialized = colors.toJSON()
         XCTAssertEqual(serialized["inputBorder"] ?? nil, UIColor.black.toHex())
+        XCTAssertEqual(serialized["inputFocusBorder"] ?? nil, UIColor.blue.toHex())
         XCTAssertEqual(serialized["inputText"] ?? nil, UIColor.white.toHex())
     }
 

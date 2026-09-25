@@ -9,8 +9,8 @@ import UIKit
 /// composer from the edges of the chat and moves the input background onto the composer itself,
 /// so the inset gutter shows the chat background.
 ///
-/// Composer colors stay on `ChatStyleColors`: `inputBackground`, `inputBorder`, `inputText`, and
-/// `inputPlaceholder`.
+/// Composer colors stay on `ChatStyleColors`: `inputBackground`, `inputBorder`,
+/// `inputFocusBorder`, `inputText`, and `inputPlaceholder`.
 ///
 /// Insets are directional: `leading` and `trailing` follow the layout direction, so the same
 /// configuration mirrors correctly in a right-to-left locale.

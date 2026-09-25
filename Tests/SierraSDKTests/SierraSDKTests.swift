@@ -809,52 +809,66 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(callbacks.endCount, 1)
     }
 
-    func testConversationStateForwardedAsStateQueryItem() {
-        let options = AgentChatControllerOptions(name: "Test")
-        let queryItems = options.toQueryItems(conversationState: "abc123")
-        let stateItems = queryItems.filter { $0.name == "state" }
-
-        XCTAssertEqual(stateItems.count, 1)
-        XCTAssertEqual(stateItems.first?.value, "abc123")
-    }
-
-    func testConversationStateOmittedWhenNilOrEmpty() {
-        let options = AgentChatControllerOptions(name: "Test")
-        XCTAssertFalse(options.toQueryItems().contains { $0.name == "state" })
-        XCTAssertFalse(options.toQueryItems(conversationState: nil).contains { $0.name == "state" })
-        XCTAssertFalse(options.toQueryItems(conversationState: "").contains { $0.name == "state" })
-    }
-
-    func testConversationIDForwardedWithUserIdentityToken() {
+    func testInitialConversationStaysOutOfQueryItems() {
         var options = AgentChatControllerOptions(name: "Test")
         options.userIdentityToken = "user-identity-token"
-
-        let queryItems = options.toQueryItems(conversationID: "external-123")
-
-        XCTAssertEqual(queryItems.first { $0.name == "conversationID" }?.value, "external-123")
+        XCTAssertFalse(options.toQueryItems().contains {
+            ["userIdentityToken", "state", "conversationID"].contains($0.name)
+        })
+        let payload = options.initialConversation(conversationState: nil, conversationID: "external-123")
+        XCTAssertEqual(payload["userIdentityToken"] as? String, "user-identity-token")
+        XCTAssertEqual(payload["target"] as? [String: String], ["kind": "conversationID", "conversationID": "external-123"])
     }
 
-    func testConversationIDRequiresUserIdentityToken() {
+    func testInitialConversationRequiresIdentityOnlyForConversationID() {
         let options = AgentChatControllerOptions(name: "Test")
-
-        XCTAssertFalse(
-            options.toQueryItems(conversationID: "external-123").contains {
-                $0.name == "conversationID"
-            }
-        )
+        for state in [nil, ""] as [String?] {
+            let payload = options.initialConversation(conversationState: state, conversationID: nil)
+            XCTAssertEqual(payload["target"] as? [String: String], ["kind": "none"])
+        }
+        for identity in [nil, ""] as [String?] {
+            var anonymousOptions = options
+            anonymousOptions.userIdentityToken = identity
+            let payload = anonymousOptions.initialConversation(conversationState: nil, conversationID: "external-123")
+            XCTAssertNil(payload["userIdentityToken"])
+            XCTAssertEqual(payload["target"] as? [String: String], ["kind": "none"])
+        }
+        let payload = options.initialConversation(conversationState: "opaque-state", conversationID: "external-123")
+        XCTAssertEqual(payload["target"] as? [String: String], ["kind": "state", "state": "opaque-state"])
     }
 
-    func testConversationStateTakesPrecedenceOverConversationID() {
+    // Covers a reload before the embed has resolved the target. Once it has,
+    // WebViewAsyncJavaScriptTests covers the target no longer being replayed.
+    @MainActor
+    func testInitialConversationScriptSurvivesAppearanceReload() throws {
         var options = AgentChatControllerOptions(name: "Test")
-        options.userIdentityToken = "user-identity-token"
-
-        let queryItems = options.toQueryItems(
+        options.userIdentityToken = "identity-with-\\-and-\"-and-\u{2028}"
+        let controller = AgentChatController(
+            agent: Agent(config: AgentConfig(token: "test-token")),
+            options: options,
             conversationState: "opaque-state",
             conversationID: "external-123"
         )
-
-        XCTAssertEqual(queryItems.first { $0.name == "state" }?.value, "opaque-state")
-        XCTAssertFalse(queryItems.contains { $0.name == "conversationID" })
+        controller.overrideUserInterfaceStyle = .light
+        controller.loadViewIfNeeded()
+        let webView = try XCTUnwrap(findWebView(in: controller.view))
+        let expected = options.initialConversation(conversationState: "opaque-state", conversationID: "external-123")
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            if appearance == .dark {
+                webView.configuration.userContentController.removeAllUserScripts()
+                controller.overrideUserInterfaceStyle = appearance
+                controller.traitCollectionDidChange(UITraitCollection(userInterfaceStyle: .light))
+            }
+            let prefix = "window.__sierraInitialConversation = "
+            let script = try XCTUnwrap(webView.configuration.userContentController.userScripts.first {
+                $0.source.hasPrefix(prefix)
+            })
+            XCTAssertEqual(script.injectionTime, .atDocumentStart)
+            XCTAssertTrue(script.isForMainFrameOnly)
+            let json = String(script.source.dropFirst(prefix.count).dropLast())
+            let actual = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? NSDictionary
+            XCTAssertEqual(actual, expected as NSDictionary)
+        }
     }
 
     func testUpdateVariablesAndSecretsOnSessionResumeForwardedAsQueryItem() {

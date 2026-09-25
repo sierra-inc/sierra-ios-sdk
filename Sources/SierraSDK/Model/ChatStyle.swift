@@ -278,6 +278,11 @@ public struct ChatStyleColors {
     /// is set. When nil, falls back to `border`.
     public let inputBorder: UIColor?
 
+    /// The message composer border color while the input is focused. Only applies when
+    /// `ChatComposerStyle` gives the composer its own surface and sets `borderWidth`. When nil,
+    /// `inputBorder` remains in use while focused.
+    public let inputFocusBorder: UIColor?
+
     /// The color of the text the user types in the message input. When nil, falls back to `text`.
     public let inputText: UIColor?
 
@@ -393,12 +398,14 @@ public struct ChatStyleColors {
                 humanAgentBubbleLink: UIColor? = nil,
                 assistantBubbleBorder: UIColor? = nil,
                 userBubbleBorder: UIColor? = nil,
-                humanAgentBubbleBorder: UIColor? = nil) {
+                humanAgentBubbleBorder: UIColor? = nil,
+                inputFocusBorder: UIColor? = nil) {
         self.backgroundColor = backgroundColor
         self.text = text
         self.border = border
         self.inputBackground = inputBackground
         self.inputBorder = inputBorder
+        self.inputFocusBorder = inputFocusBorder
         self.inputText = inputText
         self.assistantBubble = assistantBubble
         self.assistantBubbleText = assistantBubbleText
@@ -609,6 +616,9 @@ extension ChatStyleColors {
         }
         if let inputBorder = inputBorder {
             json["inputBorder"] = inputBorder.toHex()
+        }
+        if let inputFocusBorder = inputFocusBorder {
+            json["inputFocusBorder"] = inputFocusBorder.toHex()
         }
         if let inputText = inputText {
             json["inputText"] = inputText.toHex()

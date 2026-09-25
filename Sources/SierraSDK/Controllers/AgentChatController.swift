@@ -420,7 +420,21 @@ private extension AgentChatControllerOptions {
 }
 
 extension AgentChatControllerOptions {
-    func toQueryItems(conversationState: String? = nil, conversationID: String? = nil) -> [URLQueryItem] {
+    func initialConversation(conversationState: String?, conversationID: String?) -> [String: Any] {
+        var target: [String: String] = ["kind": "none"]
+        if let conversationState, !conversationState.isEmpty {
+            target = ["kind": "state", "state": conversationState]
+        } else if let conversationID, !conversationID.isEmpty, userIdentityToken?.isEmpty == false {
+            target = ["kind": "conversationID", "conversationID": conversationID]
+        }
+        var payload: [String: Any] = ["target": target]
+        if let userIdentityToken, !userIdentityToken.isEmpty {
+            payload["userIdentityToken"] = userIdentityToken
+        }
+        return payload
+    }
+
+    func toQueryItems() -> [URLQueryItem] {
         var queryItems = [URLQueryItem]()
 
         // Should match the web embed's Brand shape.
@@ -632,20 +646,6 @@ extension AgentChatControllerOptions {
             queryItems.append(URLQueryItem(name: "textDirection", value: textDirection.rawValue))
         }
 
-        if let userIdentityToken = userIdentityToken, !userIdentityToken.isEmpty {
-            queryItems.append(URLQueryItem(name: "userIdentityToken", value: userIdentityToken))
-        }
-
-        if let conversationState, !conversationState.isEmpty {
-            queryItems.append(URLQueryItem(name: "state", value: conversationState))
-        } else if let conversationID, !conversationID.isEmpty {
-            if userIdentityToken?.isEmpty == false {
-                queryItems.append(URLQueryItem(name: "conversationID", value: conversationID))
-            } else {
-                debugLog("conversationID requires userIdentityToken; ignoring conversationID")
-            }
-        }
-
         if enableConversationList {
             queryItems.append(URLQueryItem(name: "enableConversationList", value: "true"))
         }
@@ -703,6 +703,14 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private var conversationEnded = false
     private var transferredToHumanAgent = false
     private var currentConversationID: String?
+    /// The conversation the embed most recently reported through `onConversationIDAvailable`.
+    /// Identified reloads resume it through the bridge, since the embed does not persist the
+    /// credentials of an explicitly resumed conversation to native storage.
+    private var activeConversationID: String?
+    /// Set once the user leaves the conversation the controller was created to resume (the
+    /// conversation list, a new chat, or the embed clearing its store), after which a reload must
+    /// not replay the original `conversationState` / `conversationID`.
+    private var initialConversationConsumed = false
     private var showingConversationList = false
     private var isPageVisible = false
     private var lifecycleObservers: [NSObjectProtocol] = []
@@ -818,6 +826,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         addStorageUserScript(to: contentController)
         addCapabilitiesUserScript(to: contentController)
         addInitialMemoryUserScript(to: contentController)
+        addInitialConversationUserScript(to: contentController)
 
         applyAppBoundDomainsConfig(configuration)
         webView = CustomWebView(frame: .zero, configuration: configuration)
@@ -944,7 +953,8 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     /// Reloads the WebView with current color values after an appearance change.
-    /// Preserves conversation state by updating the storage user script before reloading.
+    /// Conversation state, identity, and the conversation list view survive because `loadChatURL`
+    /// rebuilds the bridge scripts and the URL from current state.
     private func reloadWebViewForAppearanceChange() {
         webViewLoaded = false
         isPageVisible = false
@@ -953,24 +963,62 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         revealFallbackWorkItem = nil
         webView.scrollView.alpha = 0.0
         startLoadingSpinner()
+        loadChatURL()
+    }
+
+    private func leaveInitialConversation() {
+        activeConversationID = nil
+        initialConversationConsumed = true
+    }
+
+    /// The storage key under which the web embed persists its conversation record.
+    private var persistedConversationKey: String {
+        "embed-chat-\(agent.config.token)"
+    }
+
+    private func persistedConversationHasID(_ value: String) -> Bool {
+        guard let record = try? JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              let id = record["conversationID"] as? String
+        else {
+            return false
+        }
+        return !id.isEmpty
+    }
+
+    /// Rebuilds the document-start bridge scripts from current state so every document load,
+    /// including retries and reloads after a token refresh, injects the same identity that the
+    /// request header carries.
+    private func refreshBootstrapUserScripts() {
         let contentController = webView.configuration.userContentController
         contentController.removeAllUserScripts()
         addStorageUserScript(to: contentController)
         addCapabilitiesUserScript(to: contentController)
         addInitialMemoryUserScript(to: contentController)
-        loadChatURL()
+        addInitialConversationUserScript(to: contentController)
+    }
+
+    /// Builds a document-start script that assigns a JSON-serializable value to a `window`
+    /// global. JSON is not a strict subset of JavaScript source: U+2028 and U+2029 are legal
+    /// unescaped in JSON strings but terminate a JavaScript line, so they are escaped here to keep
+    /// host-supplied values such as identity tokens, stored state, and memory from breaking the
+    /// script.
+    private func documentStartGlobalScript(_ name: String, value: Any) -> WKUserScript? {
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: value) else {
+            return nil
+        }
+        let jsonString = String(decoding: jsonData, as: UTF8.self)
+            .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+        return WKUserScript(
+            source: "window.\(name) = \(jsonString);",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
     }
 
     /// Adds a user script that pre-populates conversation storage for the web embed.
     private func addStorageUserScript(to contentController: WKUserContentController) {
-        let storage = agent.getStorage().getAll()
-        if let jsonData = try? JSONSerialization.data(withJSONObject: storage),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
-            let storageScript = WKUserScript(
-                source: "window.__sierraSyncStorage = \(jsonString);",
-                injectionTime: .atDocumentStart,
-                forMainFrameOnly: true
-            )
+        if let storageScript = documentStartGlobalScript("__sierraSyncStorage", value: agent.getStorage().getAll()) {
             contentController.addUserScript(storageScript)
         }
     }
@@ -997,30 +1045,47 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         if let secrets = options.conversationOptions?.secrets, !secrets.isEmpty {
             memory["secrets"] = secrets
         }
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: memory),
-              let jsonString = String(data: jsonData, encoding: .utf8)
-        else {
-            return
+        if let memoryScript = documentStartGlobalScript("__sierraInitialMemory", value: memory) {
+            contentController.addUserScript(memoryScript)
         }
-        let memoryScript = WKUserScript(
-            source: "window.__sierraInitialMemory = \(jsonString);",
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        )
-        contentController.addUserScript(memoryScript)
+    }
+
+    /// Picks what a (re)loaded document resumes. An identified controller follows the live
+    /// conversation the embed last reported, so an appearance-change reload or Retry reopens what
+    /// the user was looking at. Otherwise the `conversationState` / `conversationID` the controller
+    /// was created with is replayed until the user leaves that conversation; for an anonymous
+    /// state resume it is the only durable resume source, because the embed keeps resolved
+    /// credentials in memory rather than in native storage. After the user leaves, the document
+    /// bootstraps with no target and the embed follows its own persisted state; `loadChatURL`
+    /// separately asks for the conversation list when that is the view the user left for.
+    private func addInitialConversationUserScript(to contentController: WKUserContentController) {
+        let payload: [String: Any]
+        if options.userIdentityToken?.isEmpty == false, let activeConversationID {
+            payload = options.initialConversation(conversationState: nil, conversationID: activeConversationID)
+        } else if initialConversationConsumed {
+            payload = options.initialConversation(conversationState: nil, conversationID: nil)
+        } else {
+            payload = options.initialConversation(conversationState: conversationState, conversationID: conversationID)
+        }
+        if let conversationScript = documentStartGlobalScript("__sierraInitialConversation", value: payload) {
+            contentController.addUserScript(conversationScript)
+        }
     }
 
     private func loadChatURL() {
+        refreshBootstrapUserScripts()
         guard var urlComponents = URLComponents(string: self.agent.config.url) else {
             debugLog("Invalid URL: \(self.agent.config.url)")
             return
         }
 
-        // Turn config and options into query parameters that the iOS web embed expects.
-        var queryItems = self.options.toQueryItems(
-            conversationState: self.conversationState,
-            conversationID: self.conversationID
-        )
+        // Turn config and options into query parameters that the iOS web embed expects. The embed
+        // only opens the conversation list on load when asked to by default, so a reload while the
+        // user is on the list (appearance change, Retry) must request it or the new document
+        // renders a new conversation instead.
+        var chatOptions = self.options
+        chatOptions.showConversationListByDefault = chatOptions.showConversationListByDefault || showingConversationList
+        var queryItems = chatOptions.toQueryItems()
         if let target = self.agent.config.target, !target.isEmpty {
             queryItems.append(URLQueryItem(name: "target", value: target))
         }
@@ -1041,7 +1106,10 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
             .replacingOccurrences(of: "+", with: "%2B")
 
         if let url = urlComponents.url {
-            let request = URLRequest(url: url)
+            var request = URLRequest(url: url)
+            if let identity = options.userIdentityToken, !identity.isEmpty {
+                request.setValue(identity, forHTTPHeaderField: "X-Sierra-User-Identity-Token")
+            }
             webView.load(request)
         }
     }
@@ -1170,6 +1238,13 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     }
                 case "onConversationIDAvailable":
                     if let unprefixedConversationID = body["unprefixedConversationID"] as? String {
+                        activeConversationID = unprefixedConversationID
+                        // A live conversation means the list is no longer the current view, even
+                        // if the embed's onHideConversationList did not arrive first.
+                        if showingConversationList {
+                            showingConversationList = false
+                            updateNavigationItems()
+                        }
                         // A different conversation is now active in this controller (e.g. the user
                         // started a new chat or switched conversations). Clear per-conversation UI
                         // state so a prior transfer doesn't keep the reconnect-voice button hidden;
@@ -1218,6 +1293,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     conversationEnded = true
                     updateActionMenu()
                 case "onShowConversationList":
+                    leaveInitialConversation()
                     showingConversationList = true
                     updateNavigationItems()
                     optionsConversationCallbacks?.onShowConversationList()
@@ -1232,9 +1308,23 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     }
                 case "storeValue":
                     if let key = body["key"] as? String, let value = body["value"] as? String {
+                        if key == persistedConversationKey && !persistedConversationHasID(value) {
+                            // Starting a new chat resets the embed's state and persists a record
+                            // without a conversation ID before the new conversation reports one.
+                            leaveInitialConversation()
+                        }
                         agent.getStorage().setItem(key, value)
                     }
                 case "clearStorage":
+                    leaveInitialConversation()
+                    // The embed clears its store before it reports the list opening (which sets
+                    // the flag again) and when a new chat starts from the list, before the list
+                    // reports hiding. Dropping the flag here keeps a reload in that second window
+                    // from reopening the list.
+                    if showingConversationList {
+                        showingConversationList = false
+                        updateNavigationItems()
+                    }
                     agent.getStorage().clear()
                 default:
                     debugLog("Received unknown message type: \(type)")
@@ -1272,13 +1362,19 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     }
                 case "onUserIdentityTokenExpiry":
                     if let optionsConversationCallbacks {
-                        optionsConversationCallbacks.onUserIdentityTokenExpiry { result in
-                            switch result {
-                            case .success(let value): replyHandler(value, nil)
-                            case .failure(let error): replyHandler(nil, error.localizedDescription)
+                        optionsConversationCallbacks.onUserIdentityTokenExpiry { [weak self] result in
+                            DispatchQueue.main.async {
+                                switch result {
+                                case .success(let value):
+                                    self?.options.userIdentityToken = value?.isEmpty == false ? value : nil
+                                    replyHandler(value, nil)
+                                case .failure(let error):
+                                    replyHandler(nil, error.localizedDescription)
+                                }
                             }
                         }
                     } else {
+                        options.userIdentityToken = nil
                         replyHandler(nil, nil)
                     }
                 case "getCustomFonts":
