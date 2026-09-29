@@ -43,7 +43,8 @@ final class ChatComposerStyleTests: XCTestCase {
             maximumLines: 3,
             cornerRadius: 25,
             borderWidth: 1,
-            actionButtonSize: 28
+            actionButtonSize: 28,
+            actionIconSize: 29
         )
 
         let serialized = try json(style)
@@ -53,6 +54,7 @@ final class ChatComposerStyleTests: XCTestCase {
         XCTAssertEqual(serialized["cornerRadius"] as? CGFloat, 25)
         XCTAssertEqual(serialized["borderWidth"] as? CGFloat, 1)
         XCTAssertEqual(serialized["actionButtonSize"] as? CGFloat, 28)
+        XCTAssertEqual(serialized["actionIconSize"] as? CGFloat, 29)
     }
 
     func testNonFiniteValuesDoNotDiscardValidSettings() throws {
@@ -67,7 +69,8 @@ final class ChatComposerStyleTests: XCTestCase {
             maximumLines: 3,
             cornerRadius: .infinity,
             borderWidth: -.infinity,
-            actionButtonSize: .nan
+            actionButtonSize: .nan,
+            actionIconSize: .infinity
         )
 
         let serialized = try json(style)

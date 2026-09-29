@@ -37,13 +37,19 @@ public struct ChatComposerStyle {
     /// Width and height of the send and upload buttons, in points.
     public let actionButtonSize: CGFloat?
 
+    /// Width and height of the send and upload button glyphs, in points.
+    /// The rendered size is clamped to the effective action button size.
+    /// Does not resize SVGs that replace the complete send button.
+    public let actionIconSize: CGFloat?
+
     public init(outerInsets: NSDirectionalEdgeInsets? = nil,
                 contentInsets: NSDirectionalEdgeInsets? = nil,
                 minimumHeight: CGFloat? = nil,
                 maximumLines: Int? = nil,
                 cornerRadius: CGFloat? = nil,
                 borderWidth: CGFloat? = nil,
-                actionButtonSize: CGFloat? = nil) {
+                actionButtonSize: CGFloat? = nil,
+                actionIconSize: CGFloat? = nil) {
         self.outerInsets = outerInsets
         self.contentInsets = contentInsets
         self.minimumHeight = minimumHeight
@@ -51,6 +57,7 @@ public struct ChatComposerStyle {
         self.cornerRadius = cornerRadius
         self.borderWidth = borderWidth
         self.actionButtonSize = actionButtonSize
+        self.actionIconSize = actionIconSize
     }
 
     // `leading` and `trailing` serialize as the logical `start` and `end` keys the embed expects.
@@ -91,6 +98,9 @@ public struct ChatComposerStyle {
         }
         if let actionButtonSize = actionButtonSize, actionButtonSize.isFinite {
             json["actionButtonSize"] = actionButtonSize
+        }
+        if let actionIconSize = actionIconSize, actionIconSize.isFinite {
+            json["actionIconSize"] = actionIconSize
         }
         return json
     }
