@@ -25,6 +25,7 @@ public struct AgentAttachment {
     }
 }
 
+private let userConversationEventRole = "user"
 private let defaultMuteControlBackgroundColor = UIColor(red: 231 / 255, green: 231 / 255, blue: 231 / 255, alpha: 1)
 private let defaultMuteControlIconColor = UIColor(red: 17 / 255, green: 17 / 255, blue: 17 / 255, alpha: 1)
 private let messageRailHorizontalInset: CGFloat = 16
@@ -600,6 +601,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private var hasAttemptedRendererLoad = false
     private var pendingRenderableAttachmentBatches: [[[String: Any]]] = []
     private var lastRenderableAttachmentsSignature: String?
+    private var deliveredConversationAttachmentSignatures: Set<String> = []
     private var isMuted = false
     private var latestInputAudioLevel: Float = 0
     private var latestOutputAudioLevel: Float = 0
@@ -878,7 +880,11 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     public func voiceSession(_ session: VoiceSessionManager, didReceiveConversationEvent event: AgentVoiceConversationEvent) {
         DispatchQueue.main.async {
-            guard self.options.enableTextInput, !self.rendererFailed else {
+            guard self.options.enableTextInput else {
+                return
+            }
+            self.deliverConversationEventAttachmentsIfNeeded(event)
+            if self.rendererFailed {
                 return
             }
             self.ensureMobileRendererLoaded()
@@ -934,7 +940,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             let agentAttachments = attachments.compactMap(AgentAttachment.init(raw:))
             DispatchQueue.main.async {
                 if !agentAttachments.isEmpty {
-                    self.voiceCallbacks?.didReceiveAgentAttachment(attachments: agentAttachments)
+                    self.voiceCallbacks?.onAgentAttachments(attachments: agentAttachments)
                 }
 
                 if self.rendererFailed {
@@ -957,6 +963,25 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             }
         } else {
             debugLog("AgentVoiceController: no renderable attachments in batch; renderer load skipped")
+        }
+    }
+
+    private func deliverConversationEventAttachmentsIfNeeded(_ event: AgentVoiceConversationEvent) {
+        let attachments = event.attachments.filter { !SecretRefreshOrchestrator.isSecretRefreshAttachment($0) }
+        guard !attachments.isEmpty, let batchSignature = renderableBatchSignature(attachments) else {
+            return
+        }
+        guard deliveredConversationAttachmentSignatures.insert("\(event.messageId):\(batchSignature)").inserted else {
+            return
+        }
+        let parsedAttachments = attachments.compactMap(AgentAttachment.init(raw:))
+        guard !parsedAttachments.isEmpty else {
+            return
+        }
+        if event.role == userConversationEventRole {
+            voiceCallbacks?.onUserAttachments(attachments: parsedAttachments)
+        } else {
+            voiceCallbacks?.onAgentAttachments(attachments: parsedAttachments)
         }
     }
 
@@ -1893,14 +1918,20 @@ public protocol VoiceCallbacks: AgentEventListener {
     func onVoiceDismissed()
 
     func onVoiceError(error: Error)
-    func didReceiveAgentAttachment(attachments: [AgentAttachment])
+    /// Called when the agent sends attachments. With `enableTextInput` on, this includes
+    /// attachments on human agent messages.
+    func onAgentAttachments(attachments: [AgentAttachment])
+    /// Called when the user sends attachments. Fires only when `enableTextInput` is on, because
+    /// user attachments arrive on conversation events.
+    func onUserAttachments(attachments: [AgentAttachment])
     func onSessionInfoReceived(conversationID: String, encryptionKey: String)
     func onResumeTokenReceived(token: String)
 }
 
 public extension VoiceCallbacks {
     func onVoiceDismissed() {}
-    func didReceiveAgentAttachment(attachments: [AgentAttachment]) {}
+    func onAgentAttachments(attachments: [AgentAttachment]) {}
+    func onUserAttachments(attachments: [AgentAttachment]) {}
     func onSessionInfoReceived(conversationID: String, encryptionKey: String) {}
     func onResumeTokenReceived(token: String) {}
 }

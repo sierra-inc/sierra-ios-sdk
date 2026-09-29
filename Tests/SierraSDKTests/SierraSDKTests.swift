@@ -654,7 +654,7 @@ final class SierraSDKTests: XCTestCase {
         let delegate = CapturingVoiceCoordinatorDelegate()
         coordinator.delegate = delegate
 
-        coordinator.didReceiveAgentAttachment(
+        coordinator.onAgentAttachments(
             attachments: [
                 AgentAttachment(type: "custom", data: ["deeplink": "sierra-test://order/123"]),
             ]
@@ -1216,7 +1216,7 @@ private final class CapturingVoiceCoordinatorDelegate: AgentVoiceChatCoordinator
 
     func coordinator(
         _ coordinator: AgentVoiceChatCoordinator,
-        didReceiveAgentAttachment attachments: [AgentAttachment]
+        onAgentAttachments attachments: [AgentAttachment]
     ) {
         self.coordinator = coordinator
         self.attachments = attachments
