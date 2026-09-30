@@ -26,7 +26,14 @@ public protocol AgentVoiceChatCoordinatorDelegate: AnyObject {
     /// payload and route into native app surfaces.
     func coordinator(
         _ coordinator: AgentVoiceChatCoordinator,
-        didReceiveAgentAttachment attachments: [AgentAttachment]
+        onAgentAttachments attachments: [AgentAttachment]
+    )
+
+    /// Called when the voice session receives user-sent attachments. Fires only when the voice
+    /// options enable text input. Default: no-op.
+    func coordinator(
+        _ coordinator: AgentVoiceChatCoordinator,
+        onUserAttachments attachments: [AgentAttachment]
     )
 }
 
@@ -35,7 +42,11 @@ public extension AgentVoiceChatCoordinatorDelegate {
     func coordinator(_ coordinator: AgentVoiceChatCoordinator, didEncounterVoiceError error: Error) {}
     func coordinator(
         _ coordinator: AgentVoiceChatCoordinator,
-        didReceiveAgentAttachment attachments: [AgentAttachment]
+        onAgentAttachments attachments: [AgentAttachment]
+    ) {}
+    func coordinator(
+        _ coordinator: AgentVoiceChatCoordinator,
+        onUserAttachments attachments: [AgentAttachment]
     ) {}
 }
 
@@ -399,8 +410,12 @@ extension AgentVoiceChatCoordinator: VoiceCallbacks {
         delegate?.coordinator(self, didEncounterVoiceError: error)
     }
 
-    public func didReceiveAgentAttachment(attachments: [AgentAttachment]) {
-        delegate?.coordinator(self, didReceiveAgentAttachment: attachments)
+    public func onAgentAttachments(attachments: [AgentAttachment]) {
+        delegate?.coordinator(self, onAgentAttachments: attachments)
+    }
+
+    public func onUserAttachments(attachments: [AgentAttachment]) {
+        delegate?.coordinator(self, onUserAttachments: attachments)
     }
 
     public func onLinkClick(url: URL) -> Bool {
