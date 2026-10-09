@@ -22,6 +22,10 @@ public protocol AgentVoiceChatCoordinatorDelegate: AnyObject {
     /// Called when the voice session encounters an error. Default: no-op.
     func coordinator(_ coordinator: AgentVoiceChatCoordinator, didEncounterVoiceError error: Error)
 
+    /// Called once the voice controller created via `coordinator.makeVoiceController()` can accept
+    /// `sendUserMessage` and `sendUserAttachment`. Default: no-op.
+    func coordinatorVoiceMessageSendReady(_ coordinator: AgentVoiceChatCoordinator)
+
     /// Called when the voice session receives agent-produced attachments. Hosts can inspect the
     /// payload and route into native app surfaces.
     func coordinator(
@@ -40,6 +44,7 @@ public protocol AgentVoiceChatCoordinatorDelegate: AnyObject {
 public extension AgentVoiceChatCoordinatorDelegate {
     func coordinatorVoiceDidEnd(_ coordinator: AgentVoiceChatCoordinator) {}
     func coordinator(_ coordinator: AgentVoiceChatCoordinator, didEncounterVoiceError error: Error) {}
+    func coordinatorVoiceMessageSendReady(_ coordinator: AgentVoiceChatCoordinator) {}
     func coordinator(
         _ coordinator: AgentVoiceChatCoordinator,
         onAgentAttachments attachments: [AgentAttachment]
@@ -408,6 +413,10 @@ extension AgentVoiceChatCoordinator: VoiceCallbacks {
     public func onVoiceError(error: Error) {
         voiceSessionErrored = true
         delegate?.coordinator(self, didEncounterVoiceError: error)
+    }
+
+    public func onMessageSendReady() {
+        delegate?.coordinatorVoiceMessageSendReady(self)
     }
 
     public func onAgentAttachments(attachments: [AgentAttachment]) {

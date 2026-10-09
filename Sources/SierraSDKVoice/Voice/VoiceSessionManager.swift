@@ -255,6 +255,13 @@ public class VoiceSessionManager: NSObject {
         setState(.ended)
     }
 
+    /// The server rejects `text_client` and `attachments_client` before `opened` by ending the
+    /// call. The session reaches `.listening` only after `opened`.
+    var isMessageSendReady: Bool {
+        let state = currentState()
+        return state == .listening || state == .speaking
+    }
+
     @discardableResult
     public func sendTextClient(_ text: String) -> Bool {
         transport?.send(type: "text_client", subMsg: ["text": text]) ?? false

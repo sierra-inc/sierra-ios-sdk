@@ -32,6 +32,16 @@ private let messageRailHorizontalInset: CGFloat = 16
 private let customControlsSpacing: CGFloat = 8
 private let compactControlsSpacing: CGFloat = 4
 private let compactComposerControlsSpacing: CGFloat = 8
+private let rendererFullscreenBarHeight: CGFloat = 44
+private let rendererFullscreenDismissDistance: CGFloat = 140
+private let rendererFullscreenDismissVelocity: CGFloat = 600
+private let rendererFullscreenFlickMinimumDistance: CGFloat = 20
+private let rendererFullscreenScaleDistance: CGFloat = 420
+private let rendererFullscreenMaximumShrink: CGFloat = 0.16
+private let rendererFullscreenMaximumFade: CGFloat = 0.08
+private let rendererFullscreenMaximumCornerRadius: CGFloat = 28
+private let rendererFullscreenUpwardResistance: CGFloat = 0.25
+private let rendererFullscreenAnimationDuration: TimeInterval = 0.32
 
 public struct AgentVoiceStyle {
     /// Background color for the native voice screen.
@@ -508,6 +518,9 @@ public struct AgentVoiceControllerOptions {
     /// Placeholder shown in the native text composer.
     public var textComposerPlaceholder: String = "Type a reply"
 
+    /// Accessibility action label for exiting a fullscreen interactive attachment.
+    public var fullscreenAttachmentExitLabel: String = "Exit full screen"
+
     public init(name: String) {
         self.name = name
         self.titleBarMessage = nil
@@ -593,8 +606,17 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private var voiceSession: VoiceSessionManager?
     private var secretRefreshOrchestrator: SecretRefreshOrchestrator?
     private var renderer: MobileRendererView?
+    private var rendererContainer: UIView?
+    private var rendererFullscreenBar: UIView?
+    private var rendererFullscreenHandle: UIView?
     private var rendererInlineConstraints: [NSLayoutConstraint] = []
     private var rendererFullscreenConstraints: [NSLayoutConstraint] = []
+    private var rendererInlineTopConstraint: NSLayoutConstraint?
+    private var rendererFullscreenTopConstraint: NSLayoutConstraint?
+    private var rendererFullscreenAnimator: UIViewPropertyAnimator?
+    private var rendererFullscreenPanStartTranslationY: CGFloat = 0
+    private var isRendererPastDismissThreshold = false
+    private let rendererFullscreenHaptic = UIImpactFeedbackGenerator(style: .light)
     private var isRendererFullscreen = false
     private var hasShownFirstAttachment = false
     private var rendererFailed = false
@@ -644,6 +666,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private let disclosureLabel = UILabel()
     private var previousNavigationBarHidden: Bool?
     private var hasShutdownVoiceSession = false
+    private var hasFiredMessageSendReady = false
     private enum ControlState {
         case active
         case errorAwaitingExit
@@ -836,7 +859,14 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     public func voiceSession(_ session: VoiceSessionManager, didChangeState state: VoiceSessionManager.State) {
         DispatchQueue.main.async {
             self.updateUI(for: state)
+            self.fireMessageSendReadyIfNeeded(state: state)
         }
+    }
+
+    private func fireMessageSendReadyIfNeeded(state: VoiceSessionManager.State) {
+        guard !hasFiredMessageSendReady, state == .listening || state == .speaking else { return }
+        hasFiredMessageSendReady = true
+        voiceCallbacks?.onMessageSendReady()
     }
 
     public func voiceSessionDidReceiveInitialAudio(_ session: VoiceSessionManager) {
@@ -997,7 +1027,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         hasShownFirstAttachment = true
         placeholderContainer.isHidden = true
         placeholderWaveform?.resetLevels()
-        renderer?.isHidden = false
+        rendererContainer?.isHidden = false
     }
 
     public func voiceSession(_ session: VoiceSessionManager, didEncounterError error: Error) {
@@ -1045,43 +1075,274 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             delegate: self,
             supportsFullscreen: true
         )
-        rendererView.isHidden = true
         rendererView.backgroundColor = options.voiceStyle.backgroundColor
         self.renderer = rendererView
 
+        let containerView = UIView()
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.backgroundColor = options.voiceStyle.rendererBackgroundColor ?? options.voiceStyle.backgroundColor
+        containerView.isHidden = true
+        containerView.layer.cornerCurve = .continuous
+        containerView.layer.masksToBounds = true
+        rendererContainer = containerView
+        view.addSubview(containerView)
+
+        let fullscreenBar = makeRendererFullscreenBar()
+        rendererFullscreenBar = fullscreenBar
+        containerView.addSubview(fullscreenBar)
+
         rendererView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(rendererView)
+        containerView.addSubview(rendererView)
+
+        let inlineTopConstraint = rendererView.topAnchor.constraint(equalTo: containerView.topAnchor)
+        let fullscreenTopConstraint = rendererView.topAnchor.constraint(equalTo: fullscreenBar.bottomAnchor)
+        rendererInlineTopConstraint = inlineTopConstraint
+        rendererFullscreenTopConstraint = fullscreenTopConstraint
 
         rendererInlineConstraints = [
-            rendererView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            rendererView.bottomAnchor.constraint(equalTo: controlsContainer.topAnchor),
+            containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            containerView.bottomAnchor.constraint(equalTo: controlsContainer.topAnchor),
         ]
         // Fullscreen stays within the safe area: seat maps and similar embedded UI
         // content is task UI, which per platform convention never extends
         // under the notch or home indicator (that treatment is for media).
         rendererFullscreenConstraints = [
-            rendererView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            rendererView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            containerView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ]
         NSLayoutConstraint.activate([
-            rendererView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            rendererView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            fullscreenBar.topAnchor.constraint(equalTo: containerView.topAnchor),
+            fullscreenBar.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            fullscreenBar.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            fullscreenBar.heightAnchor.constraint(equalToConstant: rendererFullscreenBarHeight),
+            rendererView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            rendererView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            rendererView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            inlineTopConstraint,
         ] + rendererInlineConstraints)
     }
 
-    private func setRendererFullscreen(_ fullscreen: Bool) {
-        guard fullscreen != isRendererFullscreen, let renderer else { return }
+    private func makeRendererFullscreenBar() -> UIView {
+        let bar = UIView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.backgroundColor = options.voiceStyle.titleBarColor
+        bar.isHidden = true
+        bar.isAccessibilityElement = true
+        bar.accessibilityLabel = options.fullscreenAttachmentExitLabel
+        bar.accessibilityCustomActions = [
+            UIAccessibilityCustomAction(name: options.fullscreenAttachmentExitLabel) { [weak self] _ in
+                guard self?.isRendererFullscreen == true else { return false }
+                self?.exitRendererFullscreen()
+                return true
+            },
+        ]
+
+        let handle = UIView()
+        handle.translatesAutoresizingMaskIntoConstraints = false
+        handle.backgroundColor = options.voiceStyle.titleBarTextColor.withAlphaComponent(0.24)
+        handle.layer.cornerRadius = 2.5
+        rendererFullscreenHandle = handle
+        bar.addSubview(handle)
+
+        let separator = UIView()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.backgroundColor = .separator
+        bar.addSubview(separator)
+
+        let panGestureRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleRendererFullscreenPan(_:)))
+        bar.addGestureRecognizer(panGestureRecognizer)
+
+        NSLayoutConstraint.activate([
+            handle.topAnchor.constraint(equalTo: bar.topAnchor, constant: 7),
+            handle.centerXAnchor.constraint(equalTo: bar.centerXAnchor),
+            handle.widthAnchor.constraint(equalToConstant: 36),
+            handle.heightAnchor.constraint(equalToConstant: 5),
+            separator.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+        ])
+        return bar
+    }
+
+    private func setRendererFullscreen(_ fullscreen: Bool, animated: Bool = false) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard fullscreen != isRendererFullscreen,
+              let rendererContainer,
+              let rendererFullscreenBar,
+              let rendererInlineTopConstraint,
+              let rendererFullscreenTopConstraint else { return }
+
+        rendererFullscreenAnimator?.stopAnimation(true)
+        rendererFullscreenAnimator = nil
         isRendererFullscreen = fullscreen
 
         if fullscreen {
             NSLayoutConstraint.deactivate(rendererInlineConstraints)
+            rendererInlineTopConstraint.isActive = false
+            rendererFullscreenBar.isHidden = false
+            rendererFullscreenBar.alpha = 1
+            rendererFullscreenTopConstraint.isActive = true
             NSLayoutConstraint.activate(rendererFullscreenConstraints)
-            view.bringSubviewToFront(renderer)
+            resetRendererFullscreenPresentation()
+            view.bringSubviewToFront(rendererContainer)
+            view.layoutIfNeeded()
+            UIAccessibility.post(notification: .screenChanged, argument: rendererFullscreenBar)
         } else {
             NSLayoutConstraint.deactivate(rendererFullscreenConstraints)
+            rendererFullscreenTopConstraint.isActive = false
+            rendererInlineTopConstraint.isActive = true
             NSLayoutConstraint.activate(rendererInlineConstraints)
+            updateRendererDismissThreshold(false)
+            if animated {
+                let timing = UICubicTimingParameters(
+                    controlPoint1: CGPoint(x: 0.32, y: 0.72),
+                    controlPoint2: CGPoint(x: 0, y: 1)
+                )
+                let animator = UIViewPropertyAnimator(
+                    duration: rendererFullscreenAnimationDuration,
+                    timingParameters: timing
+                )
+                animator.addAnimations {
+                    self.resetRendererFullscreenPresentation()
+                    rendererFullscreenBar.alpha = 0
+                    self.view.layoutIfNeeded()
+                }
+                animator.addCompletion { [weak self, weak rendererFullscreenBar] _ in
+                    guard let self, !self.isRendererFullscreen else { return }
+                    rendererFullscreenBar?.isHidden = true
+                    rendererFullscreenBar?.alpha = 1
+                    self.rendererFullscreenAnimator = nil
+                    UIAccessibility.post(notification: .layoutChanged, argument: nil)
+                }
+                rendererFullscreenAnimator = animator
+                animator.startAnimation()
+                return
+            }
+            resetRendererFullscreenPresentation()
+            rendererFullscreenBar.isHidden = true
         }
         view.layoutIfNeeded()
+    }
+
+    private func resetRendererFullscreenPresentation() {
+        rendererContainer?.transform = .identity
+        rendererContainer?.alpha = 1
+        rendererContainer?.layer.cornerRadius = 0
+    }
+
+    private func updateRendererDismissThreshold(_ isPastThreshold: Bool) {
+        guard isPastThreshold != isRendererPastDismissThreshold else { return }
+        isRendererPastDismissThreshold = isPastThreshold
+        rendererFullscreenHandle?.backgroundColor = options.voiceStyle.titleBarTextColor.withAlphaComponent(
+            isPastThreshold ? 0.48 : 0.24
+        )
+        if isPastThreshold {
+            rendererFullscreenHaptic.impactOccurred(intensity: 0.7)
+        }
+    }
+
+    private func exitRendererFullscreen() {
+        guard isRendererFullscreen else { return }
+        setRendererFullscreen(false, animated: true)
+        renderer?.requestInlineDisplayMode()
+    }
+
+    @objc private func handleRendererFullscreenPan(_ gestureRecognizer: UIPanGestureRecognizer) {
+        guard isRendererFullscreen, let rendererContainer else { return }
+
+        switch gestureRecognizer.state {
+        case .began:
+            if let rendererFullscreenAnimator {
+                if let presentationLayer = rendererContainer.layer.presentation() {
+                    let transform = CATransform3DGetAffineTransform(presentationLayer.transform)
+                    let scale = hypot(transform.a, transform.c)
+                    let displayedTranslationY = transform.ty +
+                        rendererContainer.bounds.height * (1 - scale) / 2
+                    rendererFullscreenPanStartTranslationY = displayedTranslationY < 0
+                        ? displayedTranslationY / rendererFullscreenUpwardResistance
+                        : displayedTranslationY
+                } else {
+                    rendererFullscreenPanStartTranslationY = 0
+                }
+                rendererFullscreenAnimator.stopAnimation(true)
+                self.rendererFullscreenAnimator = nil
+                applyRendererFullscreenDrag(
+                    translationY: rendererFullscreenPanStartTranslationY,
+                    to: rendererContainer
+                )
+            } else {
+                rendererFullscreenPanStartTranslationY = 0
+            }
+            gestureRecognizer.setTranslation(.zero, in: view)
+            rendererFullscreenHaptic.prepare()
+        case .changed:
+            let translationY = rendererFullscreenPanStartTranslationY + gestureRecognizer.translation(in: view).y
+            applyRendererFullscreenDrag(translationY: translationY, to: rendererContainer)
+        case .ended:
+            let translationY = rendererFullscreenPanStartTranslationY + gestureRecognizer.translation(in: view).y
+            rendererFullscreenPanStartTranslationY = 0
+            let velocityY = gestureRecognizer.velocity(in: view).y
+            let isDownwardFlick = velocityY > rendererFullscreenDismissVelocity &&
+                translationY > rendererFullscreenFlickMinimumDistance
+            if translationY > rendererFullscreenDismissDistance || isDownwardFlick {
+                exitRendererFullscreen()
+            } else {
+                snapRendererFullscreenBack()
+            }
+        case .cancelled, .failed:
+            rendererFullscreenPanStartTranslationY = 0
+            snapRendererFullscreenBack()
+        default:
+            break
+        }
+    }
+
+    private func applyRendererFullscreenDrag(translationY: CGFloat, to rendererContainer: UIView) {
+        let resistedTranslationY = translationY < 0
+            ? translationY * rendererFullscreenUpwardResistance
+            : translationY
+        let progress = min(max(translationY, 0) / rendererFullscreenScaleDistance, 1)
+        let scale = 1 - rendererFullscreenMaximumShrink * progress
+        let scaleOffset = rendererContainer.bounds.height * (1 - scale) / 2
+        rendererContainer.transform = CGAffineTransform(
+            a: scale,
+            b: 0,
+            c: 0,
+            d: scale,
+            tx: 0,
+            ty: resistedTranslationY - scaleOffset
+        )
+        rendererContainer.alpha = 1 - rendererFullscreenMaximumFade * progress
+        rendererContainer.layer.cornerRadius = rendererFullscreenMaximumCornerRadius * progress
+        updateRendererDismissThreshold(translationY > rendererFullscreenDismissDistance)
+    }
+
+    private func snapRendererFullscreenBack() {
+        guard isRendererFullscreen else { return }
+        updateRendererDismissThreshold(false)
+        rendererFullscreenAnimator?.stopAnimation(true)
+        let animator = UIViewPropertyAnimator(
+            duration: rendererFullscreenAnimationDuration,
+            dampingRatio: 0.82
+        ) { [weak self] in
+            self?.resetRendererFullscreenPresentation()
+        }
+        animator.addCompletion { [weak self] _ in
+            self?.rendererFullscreenAnimator = nil
+        }
+        rendererFullscreenAnimator = animator
+        animator.startAnimation()
+    }
+
+    public override func accessibilityPerformEscape() -> Bool {
+        guard isRendererFullscreen else {
+            return super.accessibilityPerformEscape()
+        }
+        exitRendererFullscreen()
+        return true
     }
 
     private func ensureMobileRendererLoaded() {
@@ -1129,7 +1390,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         rendererFailed = true
         DispatchQueue.main.async {
             self.setRendererFullscreen(false)
-            self.renderer?.isHidden = true
+            self.rendererContainer?.isHidden = true
             self.placeholderContainer.isHidden = false
         }
     }
@@ -1726,11 +1987,11 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
             if self.hasShownFirstAttachment {
                 // Keep the existing renderer content visible if the call drops mid-conversation.
-                self.renderer?.isHidden = false
+                self.rendererContainer?.isHidden = false
                 self.placeholderContainer.isHidden = true
             } else {
                 // Failure before initial response: show a clean canvas behind the error banner.
-                self.renderer?.isHidden = true
+                self.rendererContainer?.isHidden = true
                 self.placeholderContainer.isHidden = true
             }
 
@@ -1777,6 +2038,36 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     public func endConversation(closeReason: AgentVoiceCloseReason = .normal) {
         endConversationForExit(closeReason: closeReason)
+    }
+
+    /// Sends a message on behalf of the user, with optional attachments, into the voice
+    /// conversation. The agent treats the text as if the user had said it.
+    ///
+    /// Returns `false` without sending when the voice session cannot accept messages yet or has
+    /// ended. Wait for `VoiceCallbacks.onMessageSendReady()` before sending. `true` means the
+    /// message was sent, not that the agent has processed it.
+    @discardableResult
+    public func sendUserMessage(_ message: String, attachments: [UserAttachment] = []) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !message.isEmpty || !attachments.isEmpty else { return false }
+        guard let voiceSession, voiceSession.isMessageSendReady else { return false }
+        if !message.isEmpty, !voiceSession.sendTextClient(message) {
+            return false
+        }
+        if !attachments.isEmpty {
+            return voiceSession.sendAttachmentsClient(attachments.map(\.svpPayload))
+        }
+        return true
+    }
+
+    /// Sends attachments on behalf of the user into the voice conversation.
+    ///
+    /// Returns `false` without sending when the voice session cannot accept messages yet or has
+    /// ended. Wait for `VoiceCallbacks.onMessageSendReady()` before sending. `true` means the
+    /// attachments were sent, not that the agent has processed them.
+    @discardableResult
+    public func sendUserAttachment(_ attachments: [UserAttachment]) -> Bool {
+        sendUserMessage("", attachments: attachments)
     }
 
     private func endConversationForExit(closeReason: AgentVoiceCloseReason = .normal) {
@@ -1926,6 +2217,8 @@ public protocol VoiceCallbacks: AgentEventListener {
     func onUserAttachments(attachments: [AgentAttachment])
     func onSessionInfoReceived(conversationID: String, encryptionKey: String)
     func onResumeTokenReceived(token: String)
+    /// Called once the voice session can accept `sendUserMessage` and `sendUserAttachment`.
+    func onMessageSendReady()
 }
 
 public extension VoiceCallbacks {
@@ -1934,6 +2227,13 @@ public extension VoiceCallbacks {
     func onUserAttachments(attachments: [AgentAttachment]) {}
     func onSessionInfoReceived(conversationID: String, encryptionKey: String) {}
     func onResumeTokenReceived(token: String) {}
+    func onMessageSendReady() {}
+}
+
+private extension UserAttachment {
+    var svpPayload: [String: Any] {
+        ["type": type.rawValue, "data": data]
+    }
 }
 
 private extension UIColor {

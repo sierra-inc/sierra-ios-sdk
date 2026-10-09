@@ -195,6 +195,11 @@ public struct AgentChatControllerOptions {
     /// precedence if useConfiguredStyle is true.
     public var uploadButtonIconSVG: String?
 
+    /// Inline SVG markup for the icon shown next to live agent display names. Replaces the default
+    /// headset icon when provided. When both the SDK and server provide a value, the
+    /// server-configured value takes precedence if useConfiguredStyle is true.
+    public var liveAgentIconSVG: String?
+
     /// If set to true user will be able to save a conversation transcript via a menu item.
     public var canSaveTranscript: Bool = false;
 
@@ -459,6 +464,7 @@ extension AgentChatControllerOptions {
         if let sendButtonSVG { brand["sendButtonSVG"] = sendButtonSVG }
         if let sendButtonDisabledSVG { brand["sendButtonDisabledSVG"] = sendButtonDisabledSVG }
         if let uploadButtonIconSVG { brand["uploadButtonIconSVG"] = uploadButtonIconSVG }
+        if let liveAgentIconSVG { brand["liveAgentIconSVG"] = liveAgentIconSVG }
         // If locale auto-detect or server-configured chat strings are enabled, remove any messages
         // that are set to their default value so server-configured values or locale defaults can win.
         if shouldOmitDefaultChatStrings {
@@ -1594,7 +1600,7 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
 
         do {
             _ = try await webView.evaluateJavaScript(
-                "sierraMobile.printTranscript()",
+                "sierraMobile.printTranscript(); true",
                 in: nil,
                 contentWorld: .page
             )
@@ -1702,7 +1708,7 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
         debugLog("Ending conversation")
         do {
             _ = try await webView.evaluateJavaScript(
-                "sierraMobile.endConversation()",
+                "sierraMobile.endConversation(); true",
                 in: nil,
                 contentWorld: .page
             )
@@ -1717,7 +1723,7 @@ extension AgentChatController: UIDocumentInteractionControllerDelegate {
         debugLog("Showing conversation list")
         do {
             _ = try await webView.evaluateJavaScript(
-                "sierraMobile.showConversationList()",
+                "sierraMobile.showConversationList(); true",
                 in: nil,
                 contentWorld: .page
             )

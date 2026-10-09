@@ -6,6 +6,54 @@ import XCTest
 
 final class WebViewAsyncJavaScriptTests: XCTestCase {
     @MainActor
+    func testEndConversationWithUndefinedJavaScriptResult() async throws {
+        let (controller, webView) = try await makeController(
+            script: """
+            window.sierraMobile = {
+              endConversation: () => { window.didEnd = true; }
+            };
+            """
+        )
+
+        await controller.endConversation()
+
+        let didEnd = try await evaluateJavaScript("window.didEnd === true", in: webView) as? Bool
+        XCTAssertEqual(didEnd, true)
+    }
+
+    @MainActor
+    func testEndConversationWithNullJavaScriptResult() async throws {
+        let (controller, webView) = try await makeController(
+            script: """
+            window.sierraMobile = {
+              endConversation: () => { window.didEnd = true; return null; }
+            };
+            """
+        )
+
+        await controller.endConversation()
+
+        let didEnd = try await evaluateJavaScript("window.didEnd === true", in: webView) as? Bool
+        XCTAssertEqual(didEnd, true)
+    }
+
+    @MainActor
+    func testShowConversationListWithUndefinedJavaScriptResult() async throws {
+        let (controller, webView) = try await makeController(
+            script: """
+            window.sierraMobile = {
+              showConversationList: () => { window.didShowList = true; }
+            };
+            """
+        )
+
+        await controller.showConversationList()
+
+        let didShowList = try await evaluateJavaScript("window.didShowList === true", in: webView) as? Bool
+        XCTAssertEqual(didShowList, true)
+    }
+
+    @MainActor
     func testAddAgentTagsReturnsJavaScriptBoolean() async throws {
         let (controller, _) = try await makeController(
             script: """
