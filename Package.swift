@@ -41,6 +41,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedFramework("AVFoundation"),
+                .linkedFramework("Network"),
                 .linkedFramework("UIKit"),
                 .linkedFramework("WebKit")
             ]

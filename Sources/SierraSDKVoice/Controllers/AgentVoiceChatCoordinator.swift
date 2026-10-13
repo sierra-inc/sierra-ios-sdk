@@ -26,6 +26,13 @@ public protocol AgentVoiceChatCoordinatorDelegate: AnyObject {
     /// `sendUserMessage` and `sendUserAttachment`. Default: no-op.
     func coordinatorVoiceMessageSendReady(_ coordinator: AgentVoiceChatCoordinator)
 
+    /// Called when the voice connection dropped and the SDK started reconnecting. Default: no-op.
+    func coordinatorVoiceDidStartReconnecting(_ coordinator: AgentVoiceChatCoordinator)
+
+    /// Called when the SDK reconnected after `coordinatorVoiceDidStartReconnecting(_:)`.
+    /// Default: no-op.
+    func coordinatorVoiceDidReconnect(_ coordinator: AgentVoiceChatCoordinator)
+
     /// Called when the voice session receives agent-produced attachments. Hosts can inspect the
     /// payload and route into native app surfaces.
     func coordinator(
@@ -45,6 +52,8 @@ public extension AgentVoiceChatCoordinatorDelegate {
     func coordinatorVoiceDidEnd(_ coordinator: AgentVoiceChatCoordinator) {}
     func coordinator(_ coordinator: AgentVoiceChatCoordinator, didEncounterVoiceError error: Error) {}
     func coordinatorVoiceMessageSendReady(_ coordinator: AgentVoiceChatCoordinator) {}
+    func coordinatorVoiceDidStartReconnecting(_ coordinator: AgentVoiceChatCoordinator) {}
+    func coordinatorVoiceDidReconnect(_ coordinator: AgentVoiceChatCoordinator) {}
     func coordinator(
         _ coordinator: AgentVoiceChatCoordinator,
         onAgentAttachments attachments: [AgentAttachment]
@@ -417,6 +426,14 @@ extension AgentVoiceChatCoordinator: VoiceCallbacks {
 
     public func onMessageSendReady() {
         delegate?.coordinatorVoiceMessageSendReady(self)
+    }
+
+    public func onVoiceReconnecting() {
+        delegate?.coordinatorVoiceDidStartReconnecting(self)
+    }
+
+    public func onVoiceReconnected() {
+        delegate?.coordinatorVoiceDidReconnect(self)
     }
 
     public func onAgentAttachments(attachments: [AgentAttachment]) {

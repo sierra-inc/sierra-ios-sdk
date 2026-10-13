@@ -7,10 +7,13 @@ import SierraSDK
 ///
 /// This protocol reports transport lifecycle transitions and decoded inbound
 /// SVP messages so higher-level coordinators can handle protocol semantics.
+/// Each transport reports at most one of `didCloseWith` or `didLoseConnection`.
 protocol SVPTransportDelegate: AnyObject {
     func svpTransportDidOpen(_ transport: SVPTransport)
     func svpTransport(_ transport: SVPTransport, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode)
-    func svpTransport(_ transport: SVPTransport, didEncounterError error: Error)
+    /// The socket failed without a close frame: a receive error, a task error, an invalid URL,
+    /// or a missed keepalive pong. `httpStatusCode` is set when the server rejected the handshake.
+    func svpTransportDidLoseConnection(_ transport: SVPTransport, error: Error, httpStatusCode: Int?)
     func svpTransport(
         _ transport: SVPTransport,
         didReceiveMessageType type: String,
@@ -30,14 +33,44 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
     private let config: AgentConfig
     weak var delegate: SVPTransportDelegate?
 
-    private var webSocketTask: URLSessionWebSocketTask?
-    private var urlSession: URLSession?
-    private var isRunning = false
+    /// Guarded by `stateLock`: the URLSession delegate queue, the keepalive queue, the session
+    /// manager's queue, and audio threads all read these.
+    private var _webSocketTask: URLSessionWebSocketTask?
+    private var _urlSession: URLSession?
+    private var _isRunning = false
+    private let stateLock = NSLock()
+
+    private var webSocketTask: URLSessionWebSocketTask? {
+        get { withStateLock { _webSocketTask } }
+        set { withStateLock { _webSocketTask = newValue } }
+    }
+
+    private var urlSession: URLSession? {
+        get { withStateLock { _urlSession } }
+        set { withStateLock { _urlSession = newValue } }
+    }
+
+    private var isRunning: Bool {
+        get { withStateLock { _isRunning } }
+        set { withStateLock { _isRunning = newValue } }
+    }
 
     private var msgNum: Int = 0
     private let msgNumQueue = DispatchQueue(label: "com.sierra.sdk.voice.msgnum")
     private let transportShutdownQueue = DispatchQueue(label: "com.sierra.sdk.voice.transportshutdown")
     private var hasShutdownTransport = false
+    /// Guarded by `transportShutdownQueue`.
+    private var hasReportedTermination = false
+
+    private let keepaliveQueue = DispatchQueue(label: "com.sierra.sdk.voice.keepalive")
+    /// Confined to `keepaliveQueue`.
+    private var keepaliveTimer: DispatchSourceTimer?
+    /// Confined to `keepaliveQueue`. Incremented for every ping so a late pong cannot satisfy a newer one.
+    private var pingSequence = 0
+    /// Confined to `keepaliveQueue`.
+    private var answeredPingSequence = 0
+    static let pingInterval: TimeInterval = 10
+    static let pongTimeout: TimeInterval = 5
 
     init(config: AgentConfig) {
         self.config = config
@@ -54,12 +87,15 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
             .replacingOccurrences(of: "http://", with: "ws://")
 
         guard let url = URL(string: svpURL) else {
-            delegate?.svpTransport(self, didEncounterError: VoiceError.invalidURL)
+            delegate?.svpTransportDidLoseConnection(self, error: VoiceError.invalidURL, httpStatusCode: nil)
             return
         }
 
         isRunning = true
-        let session = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+        let delegateQueue = OperationQueue()
+        delegateQueue.name = "com.sierra.sdk.voice.svp"
+        delegateQueue.maxConcurrentOperationCount = 1
+        let session = URLSession(configuration: .default, delegate: self, delegateQueue: delegateQueue)
         self.urlSession = session
 
         let request = makeWebSocketRequest(url: url)
@@ -117,6 +153,8 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         webSocketTask: URLSessionWebSocketTask,
         didOpenWithProtocol protocol: String?
     ) {
+        guard isRunning else { return }
+        startKeepalive()
         delegate?.svpTransportDidOpen(self)
     }
 
@@ -126,13 +164,16 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
         reason: Data?
     ) {
-        delegate?.svpTransport(self, didCloseWith: closeCode)
+        if closeCode == .abnormalClosure {
+            reportConnectionLoss(URLError(.networkConnectionLost))
+        } else {
+            reportClose(closeCode)
+        }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error, isRunning {
-            delegate?.svpTransport(self, didEncounterError: error)
-        }
+        guard let error else { return }
+        reportConnectionLoss(error)
     }
 
     // MARK: - Internal
@@ -160,12 +201,9 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
             completion?()
             return
         }
-        task.send(.string(str)) { [weak self] error in
+        task.send(.string(str)) { error in
             if let error {
-                debugLog("SVP send error: \(error)")
-                if let self {
-                    self.delegate?.svpTransport(self, didEncounterError: error)
-                }
+                debugLog("SVP close send error: \(error)")
             }
             completion?()
         }
@@ -186,11 +224,11 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
             debugLog("SVP: Cannot send \(type), websocket is not connected")
             return false
         }
-        webSocketTask.send(.string(str)) { [weak self] error in
+        // A failed send drops the message. Connection loss is reported by the receive loop, the
+        // task completion, or the keepalive ping, so a send failure is not treated as fatal.
+        webSocketTask.send(.string(str)) { error in
             if let error {
-                debugLog("SVP send error: \(error)")
-                guard let self else { return }
-                self.delegate?.svpTransport(self, didEncounterError: error)
+                debugLog("SVP send error for \(type): \(error)")
             }
         }
         return true
@@ -215,9 +253,14 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
                     self.receiveMessages()
                 }
             case .failure(let error):
-                guard self.isRunning else { return }
                 debugLog("SVP recv error: \(error)")
-                self.delegate?.svpTransport(self, didEncounterError: error)
+                // A receive failure after a close frame is the close, not a lost connection. 1006
+                // (abnormal closure) is never sent in a close frame; it means the socket died.
+                if let closeCode = self.webSocketTask?.closeCode, closeCode != .invalid, closeCode != .abnormalClosure {
+                    self.reportClose(closeCode)
+                } else {
+                    self.reportConnectionLoss(error)
+                }
             }
         }
     }
@@ -233,6 +276,73 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         delegate?.svpTransport(self, didReceiveMessageType: type, subMsg: subMsg, rawText: text)
     }
 
+    private func reportClose(_ closeCode: URLSessionWebSocketTask.CloseCode) {
+        guard markTerminationReportedIfRunning() else { return }
+        stopKeepalive()
+        delegate?.svpTransport(self, didCloseWith: closeCode)
+    }
+
+    private func reportConnectionLoss(_ error: Error) {
+        guard markTerminationReportedIfRunning() else { return }
+        stopKeepalive()
+        let statusCode = (webSocketTask?.response as? HTTPURLResponse)?.statusCode
+        debugLog("SVP: Connection lost (httpStatusCode=\(statusCode.map { "\($0)" } ?? "none")): \(error)")
+        delegate?.svpTransportDidLoseConnection(self, error: error, httpStatusCode: statusCode)
+    }
+
+    private func markTerminationReportedIfRunning() -> Bool {
+        guard isRunning else { return false }
+        return transportShutdownQueue.sync {
+            if hasReportedTermination {
+                return false
+            }
+            hasReportedTermination = true
+            return true
+        }
+    }
+
+    private func startKeepalive() {
+        keepaliveQueue.async {
+            self.keepaliveTimer?.cancel()
+            let timer = DispatchSource.makeTimerSource(queue: self.keepaliveQueue)
+            timer.schedule(deadline: .now() + Self.pingInterval, repeating: Self.pingInterval)
+            timer.setEventHandler { [weak self] in
+                self?.sendKeepalivePing()
+            }
+            self.keepaliveTimer = timer
+            timer.resume()
+        }
+    }
+
+    private func stopKeepalive() {
+        keepaliveQueue.async {
+            self.keepaliveTimer?.cancel()
+            self.keepaliveTimer = nil
+        }
+    }
+
+    /// Runs on `keepaliveQueue`.
+    private func sendKeepalivePing() {
+        guard isRunning, keepaliveTimer != nil, let task = webSocketTask else { return }
+        pingSequence += 1
+        let sequence = pingSequence
+        task.sendPing { [weak self] error in
+            guard let self else { return }
+            self.keepaliveQueue.async {
+                self.answeredPingSequence = max(self.answeredPingSequence, sequence)
+                if let error {
+                    debugLog("SVP: Keepalive ping failed: \(error)")
+                    self.reportConnectionLoss(error)
+                }
+            }
+        }
+        keepaliveQueue.asyncAfter(deadline: .now() + Self.pongTimeout) { [weak self] in
+            guard let self, self.answeredPingSequence < sequence, self.keepaliveTimer != nil else { return }
+            debugLog("SVP: No keepalive pong within \(Self.pongTimeout)s")
+            self.reportConnectionLoss(URLError(.timedOut))
+        }
+    }
+
     private func shutdownTransportIfNeeded() {
         let shouldShutdown = transportShutdownQueue.sync { () -> Bool in
             if hasShutdownTransport {
@@ -242,9 +352,21 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
             return true
         }
         guard shouldShutdown else { return }
-        webSocketTask?.cancel(with: .normalClosure, reason: nil)
-        webSocketTask = nil
-        urlSession?.invalidateAndCancel()
-        urlSession = nil
+        stopKeepalive()
+        let (task, session) = withStateLock { () -> (URLSessionWebSocketTask?, URLSession?) in
+            defer {
+                _webSocketTask = nil
+                _urlSession = nil
+            }
+            return (_webSocketTask, _urlSession)
+        }
+        task?.cancel(with: .normalClosure, reason: nil)
+        session?.invalidateAndCancel()
+    }
+
+    private func withStateLock<T>(_ block: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return block()
     }
 }

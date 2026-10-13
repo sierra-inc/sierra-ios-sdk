@@ -521,6 +521,17 @@ public struct AgentVoiceControllerOptions {
     /// Accessibility action label for exiting a fullscreen interactive attachment.
     public var fullscreenAttachmentExitLabel: String = "Exit full screen"
 
+    /// Error banner text shown when the server rejects the voice connection's credentials
+    /// (HTTP 401 or 403).
+    public var voiceConnectionErrorMessage: String = "Voice connection failed: Please check your credentials or try again later"
+
+    /// Error banner text shown when the voice session fails for any other reason, such as a lost
+    /// connection that could not be re-established.
+    public var voiceConnectionLostErrorMessage: String = "Voice connection lost. Please try again."
+
+    /// Banner text shown while the SDK reconnects after a dropped connection.
+    public var voiceReconnectingMessage: String = "Reconnecting…"
+
     public init(name: String) {
         self.name = name
         self.titleBarMessage = nil
@@ -649,6 +660,11 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let errorBannerView = UIView()
     private let errorBannerLabel = UILabel()
+    private var isShowingReconnectingBanner = false
+    private let errorBannerColor = UIColor(red: 242 / 255, green: 75 / 255, blue: 39 / 255, alpha: 1)
+    private let bannerHeight: CGFloat = 48
+    /// Keeps the renderer, inline or fullscreen, below the banner while the banner shows.
+    private var rendererContainerTopConstraint: NSLayoutConstraint?
 
     private var muteButton: UIButton?
     private var unmuteButton: UIButton?
@@ -1037,9 +1053,32 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             DispatchQueue.main.async { self.endConversationForExit() }
             return
         }
-        showErrorState(message: userFacingErrorMessage(for: error))
+        showErrorState(message: userFacingErrorMessage(rejectionStatusCode: session.handshakeRejectionStatusCode))
         DispatchQueue.main.async {
             self.voiceCallbacks?.onVoiceError(error: error)
+        }
+    }
+
+    public func voiceSessionDidStartReconnecting(_ session: VoiceSessionManager) {
+        DispatchQueue.main.async {
+            guard self.controlState == .active else { return }
+            self.isShowingReconnectingBanner = true
+            self.showBanner(
+                message: self.options.voiceReconnectingMessage,
+                backgroundColor: defaultMuteControlBackgroundColor,
+                textColor: defaultMuteControlIconColor
+            )
+            self.voiceCallbacks?.onVoiceReconnecting()
+        }
+    }
+
+    public func voiceSessionDidReconnect(_ session: VoiceSessionManager) {
+        DispatchQueue.main.async {
+            if self.isShowingReconnectingBanner {
+                self.isShowingReconnectingBanner = false
+                self.setBannerHidden(true)
+            }
+            self.voiceCallbacks?.onVoiceReconnected()
         }
     }
 
@@ -1099,18 +1138,23 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         rendererInlineTopConstraint = inlineTopConstraint
         rendererFullscreenTopConstraint = fullscreenTopConstraint
 
+        // Shared by inline and fullscreen, so a banner never covers the fullscreen bar.
+        let containerTopConstraint = containerView.topAnchor.constraint(
+            equalTo: view.safeAreaLayoutGuide.topAnchor,
+            constant: errorBannerView.isHidden ? 0 : bannerHeight
+        )
+        rendererContainerTopConstraint = containerTopConstraint
         rendererInlineConstraints = [
-            containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             containerView.bottomAnchor.constraint(equalTo: controlsContainer.topAnchor),
         ]
         // Fullscreen stays within the safe area: seat maps and similar embedded UI
         // content is task UI, which per platform convention never extends
         // under the notch or home indicator (that treatment is for media).
         rendererFullscreenConstraints = [
-            containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             containerView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ]
         NSLayoutConstraint.activate([
+            containerTopConstraint,
             containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             fullscreenBar.topAnchor.constraint(equalTo: containerView.topAnchor),
@@ -1549,7 +1593,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     private func setupErrorBanner() {
         errorBannerView.translatesAutoresizingMaskIntoConstraints = false
-        errorBannerView.backgroundColor = UIColor(red: 242 / 255, green: 75 / 255, blue: 39 / 255, alpha: 1)
+        errorBannerView.backgroundColor = errorBannerColor
         errorBannerView.isHidden = true
         view.addSubview(errorBannerView)
 
@@ -1564,7 +1608,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             errorBannerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             errorBannerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             errorBannerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            errorBannerView.heightAnchor.constraint(equalToConstant: 48),
+            errorBannerView.heightAnchor.constraint(equalToConstant: bannerHeight),
 
             errorBannerLabel.leadingAnchor.constraint(equalTo: errorBannerView.leadingAnchor, constant: 16),
             errorBannerLabel.trailingAnchor.constraint(equalTo: errorBannerView.trailingAnchor, constant: -16),
@@ -1934,6 +1978,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         case .ended:
             setLoadingStateVisible(false)
             cancelInitialGreetingFallback()
+            if isShowingReconnectingBanner {
+                isShowingReconnectingBanner = false
+                setBannerHidden(true)
+            }
             latestInputAudioLevel = 0
             latestOutputAudioLevel = 0
             placeholderWaveform?.resetLevels()
@@ -2000,13 +2048,30 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     }
 
     private func showErrorBanner(message: String) {
+        isShowingReconnectingBanner = false
+        showBanner(message: message, backgroundColor: errorBannerColor, textColor: .white)
+    }
+
+    private func showBanner(message: String, backgroundColor: UIColor, textColor: UIColor) {
+        errorBannerView.backgroundColor = backgroundColor
+        errorBannerLabel.textColor = textColor
         errorBannerLabel.text = message
-        errorBannerView.isHidden = false
+        setBannerHidden(false)
         view.bringSubviewToFront(errorBannerView)
     }
 
-    private func userFacingErrorMessage(for error: Error) -> String {
-        return "Voice connection failed: Please check your credentials or try again later"
+    private func setBannerHidden(_ hidden: Bool) {
+        errorBannerView.isHidden = hidden
+        rendererContainerTopConstraint?.constant = hidden ? 0 : bannerHeight
+    }
+
+    private func userFacingErrorMessage(rejectionStatusCode: Int?) -> String {
+        switch rejectionStatusCode {
+        case 401, 403:
+            return options.voiceConnectionErrorMessage
+        default:
+            return options.voiceConnectionLostErrorMessage
+        }
     }
 
     private func isExternalAudioInterruptionError(_ error: Error) -> Bool {
@@ -2219,6 +2284,10 @@ public protocol VoiceCallbacks: AgentEventListener {
     func onResumeTokenReceived(token: String)
     /// Called once the voice session can accept `sendUserMessage` and `sendUserAttachment`.
     func onMessageSendReady()
+    /// Called when the voice connection dropped and the SDK started reconnecting.
+    func onVoiceReconnecting()
+    /// Called when the SDK reconnected after `onVoiceReconnecting()`.
+    func onVoiceReconnected()
 }
 
 public extension VoiceCallbacks {
@@ -2228,6 +2297,8 @@ public extension VoiceCallbacks {
     func onSessionInfoReceived(conversationID: String, encryptionKey: String) {}
     func onResumeTokenReceived(token: String) {}
     func onMessageSendReady() {}
+    func onVoiceReconnecting() {}
+    func onVoiceReconnected() {}
 }
 
 private extension UserAttachment {

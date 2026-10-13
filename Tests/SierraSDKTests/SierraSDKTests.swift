@@ -113,6 +113,51 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertNil(anonymousSession.makeOpenSubMessage()["userIdentityToken"])
     }
 
+    func testVoiceReconnectResumesOnlyAfterSessionInfoOrWhenStartedAsResume() {
+        let delegate = StubVoiceSessionDelegate()
+        let config = AgentConfig(token: "test-token")
+        let opened = { (session: VoiceSessionManager, token: String) in
+            session.handleMessage(type: "opened", subMsg: ["resumeToken": token], rawText: "")
+        }
+        let sessionInfo = { (session: VoiceSessionManager) in
+            session.handleMessage(
+                type: "session_info",
+                subMsg: ["conversationId": "conversation-1", "encryptionKey": "key"],
+                rawText: ""
+            )
+        }
+
+        // Before session_info there is nothing to resume: a fresh reconnect must omit the token.
+        let freshSession = VoiceSessionManager(config: config, delegate: delegate)
+        opened(freshSession, "token-1")
+        XCTAssertNil(freshSession.makeOpenSubMessage()["resumeToken"])
+
+        sessionInfo(freshSession)
+        XCTAssertEqual(freshSession.makeOpenSubMessage()["resumeToken"] as? String, "token-1")
+
+        // A session that started as a resume keeps resuming, and drops the reason after session_info.
+        let resumedSession = VoiceSessionManager(
+            config: config,
+            resumeConversation: true,
+            resumeReason: .continueInVoice,
+            resumeToken: "host-token",
+            delegate: delegate
+        )
+        let beforeSessionInfo = resumedSession.makeOpenSubMessage()
+        XCTAssertEqual(beforeSessionInfo["resumeToken"] as? String, "host-token")
+        XCTAssertEqual(beforeSessionInfo["resumeReason"] as? String, "continue_in_voice")
+
+        sessionInfo(resumedSession)
+        let afterSessionInfo = resumedSession.makeOpenSubMessage()
+        XCTAssertEqual(afterSessionInfo["resumeToken"] as? String, "host-token")
+        XCTAssertNil(afterSessionInfo["resumeReason"])
+
+        // Without a token the server cannot resume, so a reconnect before session_info opens fresh.
+        let resumeWithoutTokenSession = VoiceSessionManager(config: config, resumeConversation: true, delegate: delegate)
+        opened(resumeWithoutTokenSession, "token-2")
+        XCTAssertNil(resumeWithoutTokenSession.makeOpenSubMessage()["resumeToken"])
+    }
+
     func testAgentVoiceChatCoordinatorSharesChatUserIdentityTokenWithVoice() {
         let agent = Agent(config: AgentConfig(token: "test-token"))
         var voiceOptions = AgentVoiceControllerOptions(name: "Voice")
@@ -1221,6 +1266,14 @@ private final class CapturingVoiceCoordinatorDelegate: AgentVoiceChatCoordinator
         self.coordinator = coordinator
         self.attachments = attachments
     }
+}
+
+private final class StubVoiceSessionDelegate: VoiceSessionDelegate {
+    func voiceSession(_ session: VoiceSessionManager, didReceiveCredentials conversationID: String, encryptionKey: String) {}
+    func voiceSession(_ session: VoiceSessionManager, didReceiveAttachments attachments: [[String: Any]]) {}
+    func voiceSession(_ session: VoiceSessionManager, didChangeState state: VoiceSessionManager.State) {}
+    func voiceSession(_ session: VoiceSessionManager, didEncounterError error: Error) {}
+    func voiceSessionDidEnd(_ session: VoiceSessionManager) {}
 }
 
 private enum TestVoiceError: Error {
