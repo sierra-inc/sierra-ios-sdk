@@ -83,6 +83,10 @@ public struct AgentVoiceStyle {
     /// Set a custom `UIFont` to configure both the typeface and point size.
     public var conversationDisclosureFont: UIFont
 
+    /// Color for Markdown links (`[label](https://...)`) in the disclosure. Links are underlined.
+    /// When nil, links use the system link color.
+    public var conversationDisclosureLinkColor: UIColor?
+
     /// Optional override for the mobile renderer background color.
     /// When nil, the renderer falls back to `backgroundColor`.
     public var rendererBackgroundColor: UIColor?
@@ -126,6 +130,7 @@ public struct AgentVoiceStyle {
         endConversationButtonIconColor: UIColor = .white,
         conversationDisclosureTextColor: UIColor = .secondaryLabel,
         conversationDisclosureFont: UIFont = .systemFont(ofSize: 12, weight: .regular),
+        conversationDisclosureLinkColor: UIColor? = nil,
         rendererBackgroundColor: UIColor? = nil,
         messageColors: ChatStyleColors = DEFAULT_CHAT_STYLE_COLORS,
         messageTypography: ChatStyleTypography = ChatStyleTypography(),
@@ -146,6 +151,7 @@ public struct AgentVoiceStyle {
         self.endConversationButtonIconColor = endConversationButtonIconColor
         self.conversationDisclosureTextColor = conversationDisclosureTextColor
         self.conversationDisclosureFont = conversationDisclosureFont
+        self.conversationDisclosureLinkColor = conversationDisclosureLinkColor
         self.rendererBackgroundColor = rendererBackgroundColor
         self.messageColors = messageColors
         self.messageTypography = messageTypography
@@ -679,7 +685,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     private var normalButtonsStack: UIStackView?
     private var compactButtonsStack: UIStackView?
     private var shouldNormalButtonsFillMessageRail = false
-    private let disclosureLabel = UILabel()
+    private let disclosureTextView = UITextView()
+    private lazy var disclosureLinkDelegate = DisclosureLinkDelegate { [weak self] url in
+        self?.openLink(url)
+    }
     private var previousNavigationBarHidden: Bool?
     private var hasShutdownVoiceSession = false
     private var hasFiredMessageSendReady = false
@@ -1440,6 +1449,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     }
 
     public func mobileRenderer(_ renderer: MobileRendererView, didClickLink url: URL) {
+        openLink(url)
+    }
+
+    private func openLink(_ url: URL) {
         if voiceCallbacks?.onLinkClick(url: url) == true {
             return
         }
@@ -1842,14 +1855,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
     }
 
     private func configureControlsLayout(buttonsStack: UIStackView?) {
-        disclosureLabel.translatesAutoresizingMaskIntoConstraints = false
-        disclosureLabel.text = options.disclosureText
-        disclosureLabel.textColor = options.voiceStyle.conversationDisclosureTextColor
-        disclosureLabel.font = options.voiceStyle.conversationDisclosureFont
-        disclosureLabel.textAlignment = .center
-        disclosureLabel.numberOfLines = 0
-        disclosureLabel.isHidden = options.disclosureText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
-        let controlsBottomPadding: CGFloat = disclosureLabel.isHidden ? 18 : 4
+        disclosureTextView.translatesAutoresizingMaskIntoConstraints = false
+        configureDisclosureText()
+        disclosureTextView.isHidden = options.disclosureText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+        let controlsBottomPadding: CGFloat = disclosureTextView.isHidden ? 18 : 4
 
         let controlsStack = UIStackView()
         controlsStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1879,7 +1888,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         if let buttonsStack {
             controlsStack.addArrangedSubview(buttonsStack)
         }
-        controlsStack.addArrangedSubview(disclosureLabel)
+        controlsStack.addArrangedSubview(disclosureTextView)
 
         let controlsBottomConstraint: NSLayoutConstraint
         if options.enableTextInput, #available(iOS 15.0, *) {
@@ -1897,8 +1906,8 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             controlsStack.leadingAnchor.constraint(equalTo: controlsContainer.leadingAnchor, constant: messageRailHorizontalInset),
             controlsStack.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -messageRailHorizontalInset),
             controlsStack.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -controlsBottomPadding),
-            disclosureLabel.leadingAnchor.constraint(equalTo: controlsContainer.leadingAnchor, constant: 24),
-            disclosureLabel.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -24),
+            disclosureTextView.leadingAnchor.constraint(equalTo: controlsContainer.leadingAnchor, constant: 24),
+            disclosureTextView.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -24),
         ]
         if let buttonsStack {
             constraints.append(
@@ -1909,6 +1918,32 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         }
         NSLayoutConstraint.activate(constraints)
         updateTextComposerEditingState(isEditing: false)
+    }
+
+    private func configureDisclosureText() {
+        var disclosure = DisclosureMarkdown.attributedText(
+            options.disclosureText ?? "",
+            font: options.voiceStyle.conversationDisclosureFont
+        )
+        let hasLinks = disclosure.runs.contains { $0.link != nil }
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        disclosure.uiKit.foregroundColor = options.voiceStyle.conversationDisclosureTextColor
+        disclosure.uiKit.paragraphStyle = paragraphStyle
+        disclosureTextView.attributedText = NSAttributedString(disclosure)
+        disclosureTextView.linkTextAttributes = [
+            .foregroundColor: options.voiceStyle.conversationDisclosureLinkColor ?? .link,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
+        disclosureTextView.isEditable = false
+        disclosureTextView.isScrollEnabled = false
+        // Links in a UITextView are tappable only when it is selectable.
+        disclosureTextView.isSelectable = hasLinks
+        disclosureTextView.isUserInteractionEnabled = hasLinks
+        disclosureTextView.backgroundColor = .clear
+        disclosureTextView.textContainerInset = .zero
+        disclosureTextView.textContainer.lineFragmentPadding = 0
+        disclosureTextView.delegate = disclosureLinkDelegate
     }
 
     private func makeTextComposerView() -> UIView {
@@ -1934,7 +1969,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         compactButtonsStack?.isHidden = !showCompactControls
         normalButtonsStack?.isHidden = !showNormalControls
         let disclosureIsEmpty = options.disclosureText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
-        disclosureLabel.isHidden = disclosureIsEmpty || (!options.useCompactControls && isEditing)
+        disclosureTextView.isHidden = disclosureIsEmpty || (!options.useCompactControls && isEditing)
         if showCompactControls, !isMuted {
             compactMuteLevelDisplay?.setInputLevel(latestInputAudioLevel)
             compactMuteLevelDisplay?.setOutputLevel(latestOutputAudioLevel)

@@ -2,6 +2,41 @@
 
 import UIKit
 
+/// A single outer shadow around the composer. Dimensions are in points and default to zero.
+/// Use the color's alpha channel to set opacity.
+public struct ChatComposerShadow {
+    public let color: UIColor
+    /// Positive values move the shadow right, including in right-to-left layouts.
+    public let offsetX: CGFloat?
+    /// Positive values move the shadow down.
+    public let offsetY: CGFloat?
+    /// Negative values are clamped to zero by the renderer.
+    public let blurRadius: CGFloat?
+    /// Negative values shrink the shadow.
+    public let spreadRadius: CGFloat?
+
+    public init(color: UIColor, offsetX: CGFloat? = nil, offsetY: CGFloat? = nil,
+                blurRadius: CGFloat? = nil, spreadRadius: CGFloat? = nil) {
+        self.color = color
+        self.offsetX = offsetX
+        self.offsetY = offsetY
+        self.blurRadius = blurRadius
+        self.spreadRadius = spreadRadius
+    }
+
+    package func toJSON() -> [String: Any] {
+        var json: [String: Any] = [:]
+        json["color"] = color.toHex()
+        for (key, value) in [("offsetX", offsetX), ("offsetY", offsetY),
+                             ("blurRadius", blurRadius), ("spreadRadius", spreadRadius)] {
+            if let value = value, value.isFinite {
+                json[key] = value
+            }
+        }
+        return json
+    }
+}
+
 /// Layout overrides for the message composer (the text input and its action buttons).
 ///
 /// Every property is optional and overrides only its own default, so an omitted
@@ -42,6 +77,17 @@ public struct ChatComposerStyle {
     /// Does not resize SVGs that replace the complete send button.
     public let actionIconSize: CGFloat?
 
+    /// Show the upload/send separator. Defaults to true. When false, the default gap is 24 points.
+    /// Use actionButtonSpacing to override the gap with or without the divider.
+    public let showActionDivider: Bool?
+
+    /// Outer shadow around the composer. Use outerInsets to leave room for it.
+    public let shadow: ChatComposerShadow?
+
+    /// Horizontal gap between the upload and send button edges, in points, with the optional
+    /// divider centered in the gap. Omit to keep default spacing. Negative values clamp to zero.
+    public let actionButtonSpacing: CGFloat?
+
     public init(outerInsets: NSDirectionalEdgeInsets? = nil,
                 contentInsets: NSDirectionalEdgeInsets? = nil,
                 minimumHeight: CGFloat? = nil,
@@ -49,7 +95,10 @@ public struct ChatComposerStyle {
                 cornerRadius: CGFloat? = nil,
                 borderWidth: CGFloat? = nil,
                 actionButtonSize: CGFloat? = nil,
-                actionIconSize: CGFloat? = nil) {
+                actionIconSize: CGFloat? = nil,
+                showActionDivider: Bool? = nil,
+                shadow: ChatComposerShadow? = nil,
+                actionButtonSpacing: CGFloat? = nil) {
         self.outerInsets = outerInsets
         self.contentInsets = contentInsets
         self.minimumHeight = minimumHeight
@@ -58,6 +107,9 @@ public struct ChatComposerStyle {
         self.borderWidth = borderWidth
         self.actionButtonSize = actionButtonSize
         self.actionIconSize = actionIconSize
+        self.showActionDivider = showActionDivider
+        self.shadow = shadow
+        self.actionButtonSpacing = actionButtonSpacing
     }
 
     // `leading` and `trailing` serialize as the logical `start` and `end` keys the embed expects.
@@ -101,6 +153,11 @@ public struct ChatComposerStyle {
         }
         if let actionIconSize = actionIconSize, actionIconSize.isFinite {
             json["actionIconSize"] = actionIconSize
+        }
+        json["showActionDivider"] = showActionDivider
+        json["shadow"] = shadow?.toJSON()
+        if let actionButtonSpacing = actionButtonSpacing, actionButtonSpacing.isFinite {
+            json["actionButtonSpacing"] = actionButtonSpacing
         }
         return json
     }
