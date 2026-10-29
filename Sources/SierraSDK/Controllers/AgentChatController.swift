@@ -211,6 +211,10 @@ public struct AgentChatControllerOptions {
     /// effective when `canEndConversation` is true.
     public var confirmEndConversation: Bool = false;
 
+    /// Label for the confirm button when ending a conversation. Nil or empty keeps the existing
+    /// label. Does not change the action that opens the confirmation.
+    public var confirmEndConversationDialogConfirmButtonLabel: String? = nil
+
     /// Controls when confirmation is shown when `confirmEndConversation` is true.
     public var confirmEndConversationMode: EndConversationConfirmationMode = .always
 
@@ -381,10 +385,10 @@ public struct AgentChatControllerOptions {
     // public SDK surface. To opt into unified voice/chat flows, use the coordinator rather
     // than setting these directly.
 
-    /// When true, shows a native navigation-bar button in the chat title bar that lets the
-    /// user reconnect to voice. The coordinator sets this only when the conversation
-    /// originally started in voice and has been continued in chat.
-    package var canReconnectToVoice: Bool = false
+    /// When set, shows a native navigation-bar button in the chat title bar that lets the user
+    /// reconnect to voice, but only while this chat conversation is open. The coordinator sets
+    /// it only when the conversation started in voice and can be resumed there.
+    package var reconnectVoiceConversationID: String?
 
     /// Label used for the reconnect-voice button.
     package var reconnectVoiceLabel: String = "Reconnect voice"
@@ -508,6 +512,9 @@ extension AgentChatControllerOptions {
             "conversationEndedMessage": conversationEndedMessage,
             "newChatButtonLabel": newChatButtonLabel,
         ]
+        if let label = confirmEndConversationDialogConfirmButtonLabel, !label.isEmpty {
+            chatInterfaceStrings["confirmEndConversationDialogConfirmButtonLabel"] = label
+        }
         if shouldOmitDefaultChatStrings, newChatButtonLabel == Self.defaults.newChatButtonLabel {
             chatInterfaceStrings.removeValue(forKey: "newChatButtonLabel")
         }
@@ -975,6 +982,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     private func leaveInitialConversation() {
         activeConversationID = nil
         initialConversationConsumed = true
+        updateActionMenu()
     }
 
     /// The storage key under which the web embed persists its conversation record.
@@ -1159,15 +1167,34 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     }
 
     private func makeReconnectVoiceButton() -> UIBarButtonItem? {
-        guard options.canReconnectToVoice else { return nil }
+        guard isShowingReconnectVoiceConversation else { return nil }
         return UIBarButtonItem(
             primaryAction: UIAction(
                 title: options.reconnectVoiceLabel,
                 image: UIImage(systemName: "waveform")
             ) { [weak self] _ in
-                self?.options.onReconnectVoice?()
+                // The user may have left the conversation since the menu was last rebuilt.
+                guard let self, self.isShowingReconnectVoiceConversation else { return }
+                self.options.onReconnectVoice?()
             }
         )
+    }
+
+    /// Whether the embed last reported the conversation that the reconnect-to-voice action resumes.
+    /// A new chat, the conversation list, or another conversation hides the button.
+    private var isShowingReconnectVoiceConversation: Bool {
+        guard let reconnectVoiceConversationID = options.reconnectVoiceConversationID,
+              let activeConversationID
+        else {
+            return false
+        }
+        return activeConversationID == Self.withoutTypePrefix(reconnectVoiceConversationID)
+    }
+
+    /// Matches the embed's `removeTypePrefix`, which it applies to `unprefixedConversationID`.
+    private static func withoutTypePrefix(_ id: String) -> String {
+        guard let separator = id.firstIndex(of: "-") else { return id }
+        return String(id[id.index(after: separator)...])
     }
 
     /// How long to keep the spinner up for a resumed conversation while waiting for

@@ -1,5 +1,6 @@
 // Copyright Sierra
 
+import AVFoundation
 import UIKit
 import WebKit
 import XCTest
@@ -39,16 +40,16 @@ final class SierraSDKTests: XCTestCase {
     }
 
     @MainActor
-    func testMobileRendererAdvertisesFullscreenOnlyForSupportedHost() {
+    func testVoiceRendererAdvertisesFullscreenOnlyForSupportedHost() {
         let agent = Agent(config: AgentConfig(token: "test-token"))
         let options = AgentVoiceControllerOptions(name: "Voice")
 
-        let standaloneItems = MobileRendererView.rendererQueryItems(
+        let standaloneItems = VoiceRendererView.rendererQueryItems(
             agent: agent,
             options: options,
             supportsFullscreen: false
         )
-        let hostedItems = MobileRendererView.rendererQueryItems(
+        let hostedItems = VoiceRendererView.rendererQueryItems(
             agent: agent,
             options: options,
             supportsFullscreen: true
@@ -56,6 +57,21 @@ final class SierraSDKTests: XCTestCase {
 
         XCTAssertFalse(standaloneItems.contains { $0.name == "supportsFullscreen" })
         XCTAssertEqual(hostedItems.first { $0.name == "supportsFullscreen" }?.value, "true")
+    }
+
+    @MainActor
+    func testRendererQueryItemsSendBCP47Locale() {
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        var options = AgentVoiceControllerOptions(name: "Voice")
+        options.locale = Locale(identifier: "fr_CA")
+
+        let items = VoiceRendererView.rendererQueryItems(
+            agent: agent,
+            options: options,
+            supportsFullscreen: false
+        )
+
+        XCTAssertEqual(items.first { $0.name == "locale" }?.value, "fr-CA")
     }
 
     // Exercises the deprecated headlessAPIToken path that shipped apps still use.
@@ -836,7 +852,11 @@ final class SierraSDKTests: XCTestCase {
         controller.loadViewIfNeeded()
         let session = VoiceSessionManager(config: AgentConfig(token: "test-token"), delegate: controller)
 
-        controller.voiceSession(session, didEncounterError: TestVoiceError.connectionFailed)
+        let audioError = NSError(
+            domain: NSOSStatusErrorDomain,
+            code: AVAudioSession.ErrorCode.insufficientPriority.rawValue
+        )
+        controller.voiceSession(session, didEncounterError: VoiceAudioError(reason: .unavailable, underlying: audioError))
         controller.voiceSession(session, didChangeState: .ended)
         controller.voiceSession(session, didChangeState: .listening)
         await withCheckedContinuation { continuation in
@@ -846,6 +866,8 @@ final class SierraSDKTests: XCTestCase {
         }
 
         XCTAssertEqual(callbacks.errorCount, 1)
+        XCTAssertEqual(callbacks.endCount, 0)
+        XCTAssertIdentical((callbacks.lastError as NSError?)?.userInfo[NSUnderlyingErrorKey] as? NSError, audioError)
         XCTAssertFalse(muteButton.isEnabled)
         XCTAssertTrue(endButton.isEnabled)
 
@@ -1283,6 +1305,7 @@ private enum TestVoiceError: Error {
 private final class CapturingVoiceCallbacks: VoiceCallbacks {
     var errorCount = 0
     var endCount = 0
+    var lastError: Error?
 
     func onVoiceEnded() {
         endCount += 1
@@ -1290,5 +1313,6 @@ private final class CapturingVoiceCallbacks: VoiceCallbacks {
 
     func onVoiceError(error: Error) {
         errorCount += 1
+        lastError = error
     }
 }

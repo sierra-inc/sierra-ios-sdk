@@ -17,38 +17,50 @@ private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
-/// Display modes the mobile renderer can request for embedded content.
-public enum MobileRendererDisplayMode: String {
+/// Display modes the voice renderer can request for embedded content.
+public enum VoiceRendererDisplayMode: String {
     case inline
     case fullscreen
 }
 
 /// Callbacks for interactive content events (e.g., user taps a flight card).
-public protocol MobileRendererDelegate: AnyObject {
+///
+/// The methods keep their original `mobileRenderer` names so that conformances written against
+/// `MobileRendererDelegate` still compile and still receive every callback.
+public protocol VoiceRendererDelegate: AnyObject {
     /// Called when a rendered component sends a message via the web bundle's
     /// sendMessage callback (e.g., user selects a flight option).
-    func mobileRenderer(_ renderer: MobileRendererView, didSendMessage text: String, attachments: [[String: Any]])
+    func mobileRenderer(_ renderer: VoiceRendererView, didSendMessage text: String, attachments: [[String: Any]])
 
     /// Called when the rendered content size changes, allowing the host to
     /// adjust layout constraints.
-    func mobileRenderer(_ renderer: MobileRendererView, didChangeContentHeight height: CGFloat)
+    func mobileRenderer(_ renderer: VoiceRendererView, didChangeContentHeight height: CGFloat)
 
     /// Called when the renderer encounters a fatal loading/rendering error.
-    func mobileRenderer(_ renderer: MobileRendererView, didEncounterError error: Error)
+    func mobileRenderer(_ renderer: VoiceRendererView, didEncounterError error: Error)
 
     /// Called when the user taps a link in a rendered attachment that would otherwise be opened
     /// externally. The host may route the URL in-app or fall back to the system handler.
-    func mobileRenderer(_ renderer: MobileRendererView, didClickLink url: URL)
+    func mobileRenderer(_ renderer: VoiceRendererView, didClickLink url: URL)
 
     /// Called when embedded content enters or exits fullscreen presentation.
-    func mobileRenderer(_ renderer: MobileRendererView, didChangeDisplayMode displayMode: MobileRendererDisplayMode)
+    func mobileRenderer(_ renderer: VoiceRendererView, didChangeDisplayMode displayMode: VoiceRendererDisplayMode)
 }
 
-public extension MobileRendererDelegate {
-    func mobileRenderer(_ renderer: MobileRendererView, didEncounterError error: Error) {}
-    func mobileRenderer(_ renderer: MobileRendererView, didClickLink url: URL) {}
-    func mobileRenderer(_ renderer: MobileRendererView, didChangeDisplayMode displayMode: MobileRendererDisplayMode) {}
+public extension VoiceRendererDelegate {
+    func mobileRenderer(_ renderer: VoiceRendererView, didEncounterError error: Error) {}
+    func mobileRenderer(_ renderer: VoiceRendererView, didClickLink url: URL) {}
+    func mobileRenderer(_ renderer: VoiceRendererView, didChangeDisplayMode displayMode: VoiceRendererDisplayMode) {}
 }
+
+@available(*, deprecated, renamed: "VoiceRendererDisplayMode")
+public typealias MobileRendererDisplayMode = VoiceRendererDisplayMode
+
+@available(*, deprecated, renamed: "VoiceRendererDelegate")
+public typealias MobileRendererDelegate = VoiceRendererDelegate
+
+@available(*, deprecated, renamed: "VoiceRendererView")
+public typealias MobileRendererView = VoiceRendererView
 
 /// A UIView that renders agent web bundle content pushed from SVP.
 ///
@@ -57,7 +69,10 @@ public extension MobileRendererDelegate {
 /// booking confirmations, etc.) by pushing JSON data directly via SVP -- no
 /// conversation state, no chat infrastructure.
 ///
-public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHandler {
+public class VoiceRendererView: UIView, WKNavigationDelegate, WKScriptMessageHandler {
+    // Host apps can match on this public error domain, so it keeps its original name.
+    private static let errorDomain = "ai.sierra.MobileRenderer"
+
     private var webView: WKWebView!
     private var isReady = false
     private var pendingAttachments: [String] = []
@@ -70,7 +85,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     private let supportsFullscreen: Bool
     private var scriptMessageHandler: WeakScriptMessageHandler?
 
-    public weak var delegate: MobileRendererDelegate?
+    public weak var delegate: VoiceRendererDelegate?
 
     @available(*, deprecated, message: "Use AgentVoiceController instead.")
     public init(agent: Agent, options: AgentVoiceControllerOptions = AgentVoiceControllerOptions(name: "Conversation")) {
@@ -84,7 +99,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     init(
         agent: Agent,
         options: AgentVoiceControllerOptions,
-        delegate: MobileRendererDelegate,
+        delegate: VoiceRendererDelegate,
         supportsFullscreen: Bool
     ) {
         self.agent = agent
@@ -144,11 +159,11 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     private func loadRendererPage() {
         guard var urlComponents = URLComponents(string: agent.config.conversationRendererURL) else {
             let error = NSError(
-                domain: "ai.sierra.MobileRenderer",
+                domain: Self.errorDomain,
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "invalid-renderer-url"]
             )
-            debugLog("MobileRenderer: Invalid URL: \(agent.config.conversationRendererURL)")
+            debugLog("VoiceRenderer: Invalid URL: \(agent.config.conversationRendererURL)")
             delegate?.mobileRenderer(self, didEncounterError: error)
             return
         }
@@ -166,10 +181,10 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         }
 
         if let url = urlComponents.url {
-            debugLog("MobileRenderer: Loading \(url)")
+            debugLog("VoiceRenderer: Loading \(url)")
             webView.load(URLRequest(url: url))
         } else {
-            debugLog("MobileRenderer: Failed to resolve renderer URL from components: \(urlComponents)")
+            debugLog("VoiceRenderer: Failed to resolve renderer URL from components: \(urlComponents)")
         }
     }
 
@@ -190,7 +205,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
             queryItems.append(URLQueryItem(name: "supportsFullscreen", value: "true"))
         }
         debugLog(
-            "MobileRenderer: Preparing renderer URL base=\(agent.config.conversationRendererURL), target=\(agent.config.target ?? "nil"), backgroundColor=\(backgroundColorHex ?? "nil")"
+            "VoiceRenderer: Preparing renderer URL base=\(agent.config.conversationRendererURL), target=\(agent.config.target ?? "nil"), backgroundColor=\(backgroundColorHex ?? "nil")"
         )
         if let backgroundColorHex {
             queryItems.append(URLQueryItem(name: "backgroundColor", value: backgroundColorHex))
@@ -202,7 +217,15 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         if options.enableTextInput, options.enableLiveTranscription {
             queryItems.append(URLQueryItem(name: "enableLiveTranscription", value: "true"))
         }
+        queryItems.append(URLQueryItem(name: "locale", value: bcp47Tag(options.locale)))
         return queryItems
+    }
+
+    private static func bcp47Tag(_ locale: Locale) -> String {
+        if #available(iOS 16, *) {
+            return locale.identifier(.bcp47)
+        }
+        return locale.identifier.replacingOccurrences(of: "_", with: "-")
     }
 
     // MARK: - Public API
@@ -212,18 +235,18 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     /// - Parameter attachments: Array of attachment dictionaries matching the
     ///   SVP `attachments_server` format (each with "type" and "data" keys).
     public func pushAttachments(_ attachments: [[String: Any]]) {
-        debugLog("MobileRenderer: pushAttachments called with \(attachments.count) attachment(s), isReady=\(isReady)")
+        debugLog("VoiceRenderer: pushAttachments called with \(attachments.count) attachment(s), isReady=\(isReady)")
         guard let data = try? JSONSerialization.data(withJSONObject: attachments),
               let json = String(data: data, encoding: .utf8) else {
-            debugLog("MobileRenderer: Failed to serialize attachments")
+            debugLog("VoiceRenderer: Failed to serialize attachments")
             return
         }
-        debugLog("MobileRenderer: serialized JSON length=\(json.count)")
+        debugLog("VoiceRenderer: serialized JSON length=\(json.count)")
 
         if isReady {
             evaluatePushAttachments(json)
         } else {
-            debugLog("MobileRenderer: Page not ready, queuing \(attachments.count) attachment(s) (pending=\(pendingAttachments.count + 1))")
+            debugLog("VoiceRenderer: Page not ready, queuing \(attachments.count) attachment(s) (pending=\(pendingAttachments.count + 1))")
             pendingAttachments.append(json)
         }
     }
@@ -239,22 +262,22 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: raw),
               let json = String(data: data, encoding: .utf8) else {
-            debugLog("MobileRenderer: Failed to serialize conversation event")
+            debugLog("VoiceRenderer: Failed to serialize conversation event")
             return
         }
 
         if isReady {
             enqueueConversationEvent(json)
         } else {
-            debugLog("MobileRenderer: Page not ready, queuing conversation event (pending=\(pendingConversationEvents.count + 1))")
+            debugLog("VoiceRenderer: Page not ready, queuing conversation event (pending=\(pendingConversationEvents.count + 1))")
             pendingConversationEvents.append(json)
         }
     }
 
     /// Clear all rendered content.
-    @available(*, deprecated, message: "The mobile renderer no longer supports native clear-conversation control messages.")
+    @available(*, deprecated, message: "The voice renderer no longer supports native clear-conversation control messages.")
     public func clearConversation() {
-        debugLog("MobileRenderer: clearConversation is deprecated and ignored")
+        debugLog("VoiceRenderer: clearConversation is deprecated and ignored")
     }
 
     /// Asks the active fullscreen content, if any, to return inline.
@@ -265,7 +288,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     // MARK: - JS Bridge
 
     private func evaluatePushAttachments(_ json: String) {
-        debugLog("MobileRenderer: calling pushAttachments JS (json length=\(json.count))")
+        debugLog("VoiceRenderer: calling pushAttachments JS (json length=\(json.count))")
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -281,9 +304,9 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
                     in: nil,
                     contentWorld: .page
                 )
-                debugLog("MobileRenderer: pushAttachments JS executed successfully")
+                debugLog("VoiceRenderer: pushAttachments JS executed successfully")
             } catch {
-                debugLog("MobileRenderer: pushAttachments JS error: \(error)")
+                debugLog("VoiceRenderer: pushAttachments JS error: \(error)")
                 self.delegate?.mobileRenderer(self, didEncounterError: error)
             }
         }
@@ -308,7 +331,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         let events = queuedConversationEvents
         guard let data = try? JSONSerialization.data(withJSONObject: events),
               let json = String(data: data, encoding: .utf8) else {
-            debugLog("MobileRenderer: Failed to serialize queued conversation events")
+            debugLog("VoiceRenderer: Failed to serialize queued conversation events")
             return
         }
         queuedConversationEvents.removeAll()
@@ -316,7 +339,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     }
 
     private func evaluatePushConversationEvents(_ events: [String], json: String) {
-        debugLog("MobileRenderer: calling pushConversationEvents JS (count=\(events.count), json length=\(json.count))")
+        debugLog("VoiceRenderer: calling pushConversationEvents JS (count=\(events.count), json length=\(json.count))")
         isConversationEventEvaluationInFlight = true
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -340,10 +363,10 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
                     in: nil,
                     contentWorld: .page
                 )
-                debugLog("MobileRenderer: pushConversationEvents JS executed successfully")
+                debugLog("VoiceRenderer: pushConversationEvents JS executed successfully")
                 didSucceed = true
             } catch {
-                debugLog("MobileRenderer: pushConversationEvents JS error: \(error)")
+                debugLog("VoiceRenderer: pushConversationEvents JS error: \(error)")
                 self.queuedConversationEvents = events + self.queuedConversationEvents
                 self.delegate?.mobileRenderer(self, didEncounterError: error)
             }
@@ -353,7 +376,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     private func flushPendingAttachments() {
         let pending = pendingAttachments
         pendingAttachments.removeAll()
-        debugLog("MobileRenderer: flushing \(pending.count) pending attachment batch(es)")
+        debugLog("VoiceRenderer: flushing \(pending.count) pending attachment batch(es)")
         for json in pending {
             evaluatePushAttachments(json)
         }
@@ -362,13 +385,13 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     private func flushPendingConversationEvents() {
         let pending = pendingConversationEvents
         pendingConversationEvents.removeAll()
-        debugLog("MobileRenderer: flushing \(pending.count) pending conversation event(s)")
+        debugLog("VoiceRenderer: flushing \(pending.count) pending conversation event(s)")
         for json in pending {
             enqueueConversationEvent(json)
         }
     }
 
-    /// Shapes posted by the mobile renderer web bundle use `attachments` (array). Older bundles may send a single `attachment` with `data`.
+    /// Shapes posted by the voice renderer web bundle use `attachments` (array). Older bundles may send a single `attachment` with `data`.
     private func svpClientEventAttachments(from body: [String: Any]) -> [[String: Any]] {
         if let attachments = body["attachments"] as? [[String: Any]] {
             return attachments
@@ -389,7 +412,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
 
         switch type {
         case "onOpen":
-            debugLog("MobileRenderer: WebView ready")
+            debugLog("VoiceRenderer: WebView ready")
             isReady = true
             flushPendingConversationEvents()
             flushPendingAttachments()
@@ -408,11 +431,11 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
         case "onError":
             let reason = body["reason"] as? String ?? "unknown-renderer-error"
             let error = NSError(
-                domain: "ai.sierra.MobileRenderer",
+                domain: Self.errorDomain,
                 code: 2,
                 userInfo: [NSLocalizedDescriptionKey: reason]
             )
-            debugLog("MobileRenderer: JS bridge reported error: \(reason)")
+            debugLog("VoiceRenderer: JS bridge reported error: \(reason)")
             delegate?.mobileRenderer(self, didEncounterError: error)
 
         case "onLinkClick":
@@ -422,7 +445,7 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
 
         case "onDisplayModeChanged":
             if let rawDisplayMode = body["displayMode"] as? String,
-               let displayMode = MobileRendererDisplayMode(rawValue: rawDisplayMode) {
+               let displayMode = VoiceRendererDisplayMode(rawValue: rawDisplayMode) {
                 delegate?.mobileRenderer(self, didChangeDisplayMode: displayMode)
             }
 
@@ -434,12 +457,12 @@ public class MobileRendererView: UIView, WKNavigationDelegate, WKScriptMessageHa
     // MARK: - WKNavigationDelegate
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        debugLog("MobileRenderer: Navigation failed: \(error)")
+        debugLog("VoiceRenderer: Navigation failed: \(error)")
         delegate?.mobileRenderer(self, didEncounterError: error)
     }
 
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        debugLog("MobileRenderer: Provisional navigation failed: \(error)")
+        debugLog("VoiceRenderer: Provisional navigation failed: \(error)")
         delegate?.mobileRenderer(self, didEncounterError: error)
     }
 

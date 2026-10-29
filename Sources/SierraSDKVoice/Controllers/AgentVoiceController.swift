@@ -1,6 +1,5 @@
 // Copyright Sierra
 
-import AVFoundation
 import SierraSDK
 import SierraChatKit
 import UIKit
@@ -87,14 +86,14 @@ public struct AgentVoiceStyle {
     /// When nil, links use the system link color.
     public var conversationDisclosureLinkColor: UIColor?
 
-    /// Optional override for the mobile renderer background color.
+    /// Optional override for the voice renderer background color.
     /// When nil, the renderer falls back to `backgroundColor`.
     public var rendererBackgroundColor: UIColor?
 
-    /// Transcript bubble colors in the mobile renderer.
+    /// Transcript bubble colors in the voice renderer.
     public var messageColors: ChatStyleColors
 
-    /// Transcript bubble typography in the mobile renderer.
+    /// Transcript bubble typography in the voice renderer.
     public var messageTypography: ChatStyleTypography
 
     /// Tint color for the send arrow in the native text composer.
@@ -233,42 +232,42 @@ public struct AgentVoiceStyle {
 }
 
 extension AgentVoiceStyle {
-    /// User transcript bubble background color in the mobile renderer.
+    /// User transcript bubble background color in the voice renderer.
     @available(*, deprecated, message: "Use messageColors instead.")
     public var userBubble: UIColor {
         get { messageColors.userBubble }
         set { messageColors = messageColors.with(userBubble: newValue) }
     }
 
-    /// User transcript text color in the mobile renderer.
+    /// User transcript text color in the voice renderer.
     @available(*, deprecated, message: "Use messageColors instead.")
     public var userBubbleText: UIColor {
         get { messageColors.userBubbleText }
         set { messageColors = messageColors.with(userBubbleText: newValue) }
     }
 
-    /// Assistant transcript bubble background color in the mobile renderer.
+    /// Assistant transcript bubble background color in the voice renderer.
     @available(*, deprecated, message: "Use messageColors instead.")
     public var assistantBubble: UIColor {
         get { messageColors.assistantBubble }
         set { messageColors = messageColors.with(assistantBubble: newValue) }
     }
 
-    /// Assistant transcript text color in the mobile renderer.
+    /// Assistant transcript text color in the voice renderer.
     @available(*, deprecated, message: "Use messageColors instead.")
     public var assistantBubbleText: UIColor {
         get { messageColors.assistantBubbleText }
         set { messageColors = messageColors.with(assistantBubbleText: newValue) }
     }
 
-    /// Transcript bubble font family in the mobile renderer.
+    /// Transcript bubble font family in the voice renderer.
     @available(*, deprecated, message: "Use messageTypography instead.")
     public var messageFontFamily: String {
         get { messageTypography.fontFamily ?? "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif" }
         set { messageTypography = messageTypography.withGlobal(fontFamily: newValue) }
     }
 
-    /// Transcript bubble font weight in the mobile renderer.
+    /// Transcript bubble font weight in the voice renderer.
     @available(*, deprecated, message: "Use messageTypography instead.")
     public var messageFontWeight: Int {
         get { messageTypography.userBubble?.fontWeight ?? 510 }
@@ -535,6 +534,13 @@ public struct AgentVoiceControllerOptions {
     /// connection that could not be re-established.
     public var voiceConnectionLostErrorMessage: String = "Voice connection lost. Please try again."
 
+    /// Error banner text shown when the device refuses audio as voice starts, for example during
+    /// another call.
+    public var voiceAudioUnavailableErrorMessage: String = "Voice audio isn't available right now."
+
+    /// Error banner text shown when an audio interruption from another app ends the voice session.
+    public var voiceAudioInterruptedErrorMessage: String = "Voice ended because another app is using audio."
+
     /// Banner text shown while the SDK reconnects after a dropped connection.
     public var voiceReconnectingMessage: String = "Reconnecting…"
 
@@ -614,15 +620,15 @@ public extension AgentVoiceControllerOptions {
 
 /// Displays a native voice conversation with an embedded WebView for rendering
 /// agent attachments. Voice audio is handled natively via VoiceSessionManager
-/// (SVP WebSocket), while attachments are rendered by a MobileRendererView
+/// (SVP WebSocket), while attachments are rendered by a VoiceRendererView
 /// that loads the agent's web bundle directly -- no conversation state, no
 /// credential seeding, no refresh polling.
-public class AgentVoiceController: UIViewController, VoiceSessionDelegate, MobileRendererDelegate {
+public class AgentVoiceController: UIViewController, VoiceSessionDelegate, VoiceRendererDelegate {
     private let agent: Agent
     internal private(set) var options: AgentVoiceControllerOptions
     private var voiceSession: VoiceSessionManager?
     private var secretRefreshOrchestrator: SecretRefreshOrchestrator?
-    private var renderer: MobileRendererView?
+    private var renderer: VoiceRendererView?
     private var rendererContainer: UIView?
     private var rendererFullscreenBar: UIView?
     private var rendererFullscreenHandle: UIView?
@@ -841,7 +847,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         self.voiceSession = session
         self.secretRefreshOrchestrator = SecretRefreshOrchestrator(voiceSession: session, callbacks: voiceCallbacks)
         if options.enableTextInput {
-            ensureMobileRendererLoaded()
+            ensureVoiceRendererLoaded()
         }
         session.connect()
         updateUI(for: .connecting)
@@ -942,7 +948,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
             if self.rendererFailed {
                 return
             }
-            self.ensureMobileRendererLoaded()
+            self.ensureVoiceRendererLoaded()
             self.revealRendererContentIfNeeded()
             self.markInitialGreetingReceivedIfNeeded()
             self.renderer?.pushConversationEvent(event)
@@ -1003,7 +1009,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
                 }
 
                 // Lazily load the renderer so voice startup/UI presentation is never blocked by WebView load.
-                self.ensureMobileRendererLoaded()
+                self.ensureVoiceRendererLoaded()
                 if self.rendererFailed {
                     return
                 }
@@ -1057,12 +1063,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
 
     public func voiceSession(_ session: VoiceSessionManager, didEncounterError error: Error) {
         debugLog("Voice session error: \(error)")
-        if isExternalAudioInterruptionError(error) {
-            debugLog("AgentVoiceController: ending voice session due to external audio interruption error: \(error.localizedDescription)")
-            DispatchQueue.main.async { self.endConversationForExit() }
-            return
-        }
-        showErrorState(message: userFacingErrorMessage(rejectionStatusCode: session.handshakeRejectionStatusCode))
+        showErrorState(message: userFacingErrorMessage(for: error, rejectionStatusCode: session.handshakeRejectionStatusCode))
         DispatchQueue.main.async {
             self.voiceCallbacks?.onVoiceError(error: error)
         }
@@ -1111,13 +1112,13 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         }
     }
 
-    // MARK: - Mobile Renderer
+    // MARK: - Voice Renderer
 
-    private func loadMobileRenderer() {
+    private func loadVoiceRenderer() {
         guard !hasAttemptedRendererLoad else { return }
         hasAttemptedRendererLoad = true
 
-        let rendererView = MobileRendererView(
+        let rendererView = VoiceRendererView(
             agent: agent,
             options: options,
             delegate: self,
@@ -1398,10 +1399,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         return true
     }
 
-    private func ensureMobileRendererLoaded() {
+    private func ensureVoiceRendererLoaded() {
         if renderer == nil {
-            debugLog("AgentVoiceController: loading mobile renderer, conversationRendererURL=\(agent.config.conversationRendererURL)")
-            loadMobileRenderer()
+            debugLog("AgentVoiceController: loading voice renderer, conversationRendererURL=\(agent.config.conversationRendererURL)")
+            loadVoiceRenderer()
             if let renderer {
                 let pending = pendingRenderableAttachmentBatches
                 pendingRenderableAttachmentBatches.removeAll()
@@ -1412,33 +1413,33 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         }
     }
 
-    // MARK: - MobileRendererDelegate
+    // MARK: - VoiceRendererDelegate
 
-    public func mobileRenderer(_ renderer: MobileRendererView, didSendMessage text: String, attachments: [[String: Any]]) {
-        debugLog("MobileRendererDelegate: didSendMessage text=\(text.isEmpty ? "(empty)" : "\"\(text.prefix(80))\""), attachments=\(attachments.count)")
+    public func mobileRenderer(_ renderer: VoiceRendererView, didSendMessage text: String, attachments: [[String: Any]]) {
+        debugLog("VoiceRendererDelegate: didSendMessage text=\(text.isEmpty ? "(empty)" : "\"\(text.prefix(80))\""), attachments=\(attachments.count)")
 
         if !text.isEmpty {
-            debugLog("MobileRendererDelegate: sending text_client: \(text.prefix(80))")
+            debugLog("VoiceRendererDelegate: sending text_client: \(text.prefix(80))")
             voiceSession?.sendTextClient(text)
         }
 
         if !attachments.isEmpty {
-            debugLog("MobileRendererDelegate: sending attachments_client with \(attachments.count) attachment(s)")
+            debugLog("VoiceRendererDelegate: sending attachments_client with \(attachments.count) attachment(s)")
             voiceSession?.sendAttachmentsClient(attachments)
         }
     }
 
-    public func mobileRenderer(_ renderer: MobileRendererView, didChangeContentHeight height: CGFloat) {
+    public func mobileRenderer(_ renderer: VoiceRendererView, didChangeContentHeight height: CGFloat) {
         // Layout is handled by the WebView's scroll view
     }
 
-    public func mobileRenderer(_ renderer: MobileRendererView, didChangeDisplayMode displayMode: MobileRendererDisplayMode) {
+    public func mobileRenderer(_ renderer: VoiceRendererView, didChangeDisplayMode displayMode: VoiceRendererDisplayMode) {
         DispatchQueue.main.async {
             self.setRendererFullscreen(self.controlState == .active && displayMode == .fullscreen)
         }
     }
 
-    public func mobileRenderer(_ renderer: MobileRendererView, didEncounterError error: Error) {
+    public func mobileRenderer(_ renderer: VoiceRendererView, didEncounterError error: Error) {
         debugLog("AgentVoiceController: renderer error: \(error)")
         rendererFailed = true
         DispatchQueue.main.async {
@@ -1448,7 +1449,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         }
     }
 
-    public func mobileRenderer(_ renderer: MobileRendererView, didClickLink url: URL) {
+    public func mobileRenderer(_ renderer: VoiceRendererView, didClickLink url: URL) {
         openLink(url)
     }
 
@@ -2100,40 +2101,21 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Mobil
         rendererContainerTopConstraint?.constant = hidden ? 0 : bannerHeight
     }
 
-    private func userFacingErrorMessage(rejectionStatusCode: Int?) -> String {
+    private func userFacingErrorMessage(for error: Error, rejectionStatusCode: Int?) -> String {
+        if let audio = error as? VoiceAudioError {
+            switch audio.reason {
+            case .unavailable:
+                return options.voiceAudioUnavailableErrorMessage
+            case .interrupted:
+                return options.voiceAudioInterruptedErrorMessage
+            }
+        }
         switch rejectionStatusCode {
         case 401, 403:
             return options.voiceConnectionErrorMessage
         default:
             return options.voiceConnectionLostErrorMessage
         }
-    }
-
-    private func isExternalAudioInterruptionError(_ error: Error) -> Bool {
-        var currentError: NSError? = error as NSError
-        while let nsError = currentError {
-            let domain = nsError.domain.lowercased()
-            let isAudioRelatedDomain =
-                domain.contains("audio") ||
-                domain.contains("avfoundation") ||
-                domain.contains("avaudiosession")
-
-            if isAudioRelatedDomain,
-               let code = AVAudioSession.ErrorCode(rawValue: nsError.code),
-               (code == .cannotInterruptOthers || code == .insufficientPriority) {
-                return true
-            }
-
-            if isAudioRelatedDomain {
-                let message = nsError.localizedDescription.lowercased()
-                if message.contains("interruption") || message.contains("cannot interrupt others") {
-                    return true
-                }
-            }
-
-            currentError = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
-        }
-        return false
     }
 
     public func endConversation(closeReason: AgentVoiceCloseReason = .normal) {

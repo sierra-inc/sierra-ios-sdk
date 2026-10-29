@@ -224,11 +224,20 @@ public final class AgentVoiceChatCoordinator {
             chatOptions.userIdentityToken = options.voiceOptions.userIdentityToken
         }
         // Expose the reconnect-to-voice button only when (a) the host opted in via
-        // `options.canReconnectToVoice` and (b) the conversation actually originated in voice.
-        if options.canReconnectToVoice && voiceConversationID != nil {
-            chatOptions.canReconnectToVoice = true
+        // `options.canReconnectToVoice` and (b) the conversation originated in voice and the
+        // server issued a resume token. The chat shows it only while this conversation is open.
+        if options.canReconnectToVoice, let reconnectConversationID = conversationID,
+           let reconnectVoiceConversationID = voiceConversationID, voiceResumeToken != nil {
+            chatOptions.reconnectVoiceConversationID = reconnectConversationID
             chatOptions.onReconnectVoice = { [weak self] in
-                guard let self else { return }
+                // Ignore a tap from a controller made for an earlier session, or after ending the
+                // chat reset the voice credentials, so it can't resume or start the wrong call.
+                guard let self, self.conversationID == reconnectConversationID,
+                      self.voiceConversationID == reconnectVoiceConversationID,
+                      self.voiceResumeToken != nil
+                else {
+                    return
+                }
                 self.prepareVoiceReconnect()
                 self.delegate?.coordinatorDidRequestVoiceReconnect(self)
             }

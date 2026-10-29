@@ -401,11 +401,12 @@ public class VoiceSessionManager: NSObject {
         if !hasBackgroundAudioModeEnabled() {
             debugLog("SVP warning: UIBackgroundModes does not include 'audio'; background playback/capture may stop when app is backgrounded")
         }
+        try configureAudioSession()
         do {
-            try activateAudioSession()
+            try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             debugLog("SVP: Audio session setup failed: \(error)")
-            throw error
+            throw VoiceAudioError(reason: .unavailable, underlying: error)
         }
 
         let engine = AVAudioEngine()
@@ -548,7 +549,8 @@ public class VoiceSessionManager: NSObject {
     @discardableResult
     private func reactivateAudioSession() throws {
         do {
-            try activateAudioSession()
+            try configureAudioSession()
+            try AVAudioSession.sharedInstance().setActive(true)
             if let engine = audioEngine, !engine.isRunning {
                 try engine.start()
             }
@@ -698,12 +700,7 @@ public class VoiceSessionManager: NSObject {
             // any other end is a normal session end.
             if isRejectedReconnect {
                 debugLog("SVP: Voice reconnect rejected by the server")
-                let transport = withConnectionLock { () -> SVPTransport? in
-                    isConnectionOpen = false
-                    return self.transport
-                }
-                transport?.disconnect(sendCloseMessage: true, closeReason: AgentVoiceCloseReason.error.rawValue)
-                failSession(error: URLError(.networkConnectionLost))
+                failSession(error: URLError(.networkConnectionLost), closeReason: AgentVoiceCloseReason.error.rawValue)
             } else if subMsg["customReason"] as? String == AgentVoiceCloseReason.continueInChat.rawValue {
                 disconnect(sendCloseMessage: true, closeReason: .continueInChat)
                 delegate?.voiceSessionDidRequestContinueInChat(self)
@@ -906,6 +903,16 @@ public class VoiceSessionManager: NSObject {
         pendingNetworkWaitLimit = nil
     }
 
+    /// Runs on `sessionQueue`. Closes the transport before reporting a terminal session failure.
+    private func failSession(error: Error, closeReason: String) {
+        let transport = withConnectionLock { () -> SVPTransport? in
+            isConnectionOpen = false
+            return self.transport
+        }
+        transport?.disconnect(sendCloseMessage: true, closeReason: closeReason)
+        failSession(error: error)
+    }
+
     /// Runs on `sessionQueue`. Ends a session the manager can no longer continue and reports why.
     private func failSession(error: Error) {
         DispatchQueue.main.async {
@@ -977,6 +984,7 @@ public class VoiceSessionManager: NSObject {
             debugLog("SVP: Audio session interruption ended (shouldResume=\(shouldResume))")
             guard interruptionInProgress else { return }
             interruptionInProgress = false
+            var underlyingError: Error?
             if shouldResume {
                 // Always clear the interruption pause once the session reactivates, even if the
                 // user is muted: resumeFromInterruption() only clears the interruption flag (never
@@ -987,29 +995,25 @@ public class VoiceSessionManager: NSObject {
                     try reactivateAudioSession()
                     debugLog("SVP: Listening resumed after interruption")
                     audioCaptureSession?.resumeFromInterruption()
+                    return
                 } catch {
-                    reportAudioError(error)
+                    // iOS allowed a resume, but reactivation failed; reuse the no-resume close reason.
+                    underlyingError = error
                 }
-                return
             }
-            endSessionForExternalAudioInterruption(reason: "audio_session_interruption_no_resume")
+            failSession(
+                error: VoiceAudioError(reason: .interrupted, underlying: underlyingError),
+                closeReason: "audio_session_interruption_no_resume"
+            )
         @unknown default:
             break
         }
     }
 
-    private func endSessionForExternalAudioInterruption(reason: String) {
-        guard sessionSync({ isSessionRunning }) else { return }
-        debugLog("SVP: Ending session due to external audio interruption (\(reason))")
-        disconnect(sendCloseMessage: true, rawCloseReason: reason)
-        delegate?.voiceSessionDidEnd(self)
-    }
-
-    private func activateAudioSession() throws {
+    private func configureAudioSession() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setPreferredIOBufferDuration(preferredIOBufferDuration)
-        try session.setActive(true)
     }
 
     private func describeState(_ state: State) -> String {
@@ -1129,5 +1133,31 @@ enum VoiceError: LocalizedError, Equatable {
         switch self {
         case .invalidURL: return "Invalid SVP WebSocket URL"
         }
+    }
+}
+
+struct VoiceAudioError: LocalizedError, CustomNSError {
+    enum Reason: Int { case unavailable = 1, interrupted = 2 }
+
+    let reason: Reason
+    let underlying: Error?
+
+    static let errorDomain = "ai.sierra.voice.audio"
+    var errorCode: Int { reason.rawValue }
+
+    var errorDescription: String? {
+        switch reason {
+        case .unavailable: return "Voice audio unavailable"
+        case .interrupted: return "Voice audio interrupted"
+        }
+    }
+
+    var errorUserInfo: [String: Any] {
+        var userInfo: [String: Any] = [NSLocalizedDescriptionKey: errorDescription ?? ""]
+        // Android's audio-focus APIs return no underlying error; iOS preserves the platform error.
+        if let underlying {
+            userInfo[NSUnderlyingErrorKey] = underlying as NSError
+        }
+        return userInfo
     }
 }
