@@ -54,6 +54,11 @@ final class DisclosureMarkdownTests: XCTestCase {
         XCTAssertEqual(links(render("[Policy](HTTPS://example.com/Privacy)")), ["Policy": "https://example.com/Privacy"])
     }
 
+    func testCustomSchemeNeedsSlashesAndIsNotBlocked() {
+        let markdown = "[App](MyApp://action?privacy), [bare](myapp:action), [empty](myapp://), and [js](javascript://alert(1))"
+        XCTAssertEqual(links(render(markdown)), ["App": "myapp://action?privacy"])
+    }
+
     private func render(_ markdown: String) -> AttributedString {
         DisclosureMarkdown.attributedText(markdown, font: font)
     }

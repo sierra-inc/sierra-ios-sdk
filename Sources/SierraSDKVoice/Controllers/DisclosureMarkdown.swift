@@ -2,10 +2,15 @@
 
 import UIKit
 
-/// Renders the voice disclosure's inline Markdown. Only http, https, mailto, and tel links with a
-/// target are kept, with a lowercase scheme; any other link renders as its plain label.
+/// Renders the voice disclosure's inline Markdown. Only http, https, mailto, and tel links, and
+/// other `<scheme>://` links that are not blocked, are kept when they have a target, with a
+/// lowercase scheme; any other link renders as its plain label.
 enum DisclosureMarkdown {
     private static let allowedLinkSchemes: Set<String> = ["http", "https", "mailto", "tel"]
+    /// The web list, plus `content` and `intent` to match Android.
+    private static let blockedLinkSchemes: Set<String> = [
+        "about", "blob", "data", "file", "javascript", "vbscript", "content", "intent",
+    ]
 
     static func attributedText(_ markdown: String, font: UIFont) -> AttributedString {
         var text = (try? AttributedString(
@@ -36,10 +41,15 @@ enum DisclosureMarkdown {
     private static func allowedLink(_ url: URL) -> URL? {
         guard
             var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-            let scheme = components.scheme?.lowercased(),
-            allowedLinkSchemes.contains(scheme),
+            let scheme = components.scheme?.lowercased()
+        else {
+            return nil
+        }
+        let rest = url.absoluteString.dropFirst(scheme.count + 1)
+        guard
+            allowedLinkSchemes.contains(scheme) || (!blockedLinkSchemes.contains(scheme) && rest.hasPrefix("//")),
             // A link needs a target, so `https://` and `mailto:` alone are not links.
-            url.absoluteString.dropFirst(scheme.count + 1).contains(where: { $0 != "/" })
+            rest.contains(where: { $0 != "/" })
         else {
             return nil
         }

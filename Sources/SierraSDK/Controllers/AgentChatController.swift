@@ -248,6 +248,10 @@ public struct AgentChatControllerOptions {
     /// message input area. Defaults to false.
     public var removeInputDivider: Bool = false;
 
+    /// Prevent the message input from automatically receiving focus when chat loads.
+    /// Defaults to false. Users can still tap the input to focus it and type.
+    public var disableAutoFocus: Bool = false;
+
     /// Optional layout overrides for the message composer (insets, height, corner radius,
     /// border, and action button size). When nil, the composer keeps its default layout.
     public var composerStyle: ChatComposerStyle? = nil;
@@ -576,6 +580,10 @@ extension AgentChatControllerOptions {
 
         if startAtTop {
             queryItems.append(URLQueryItem(name: "startAtTop", value: "true"))
+        }
+
+        if disableAutoFocus {
+            queryItems.append(URLQueryItem(name: "disableAutoFocus", value: "true"))
         }
 
         if removeInputDivider {
