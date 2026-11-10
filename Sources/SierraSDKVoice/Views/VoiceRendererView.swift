@@ -53,6 +53,14 @@ public extension VoiceRendererDelegate {
     func mobileRenderer(_ renderer: VoiceRendererView, didChangeDisplayMode displayMode: VoiceRendererDisplayMode) {}
 }
 
+/// Renderer callbacks only the SDK consumes. `VoiceRendererDelegate` is public API, so these stay
+/// off it.
+protocol VoiceRendererContentDelegate: AnyObject {
+    /// Called when the page reports rendered content. `cardRendered` is true once an attachment card
+    /// has drawn, and nil when the page predates the flag.
+    func voiceRenderer(_ renderer: VoiceRendererView, didRenderAttachment cardRendered: Bool?)
+}
+
 @available(*, deprecated, renamed: "VoiceRendererDisplayMode")
 public typealias MobileRendererDisplayMode = VoiceRendererDisplayMode
 
@@ -86,6 +94,7 @@ public class VoiceRendererView: UIView, WKNavigationDelegate, WKScriptMessageHan
     private var scriptMessageHandler: WeakScriptMessageHandler?
 
     public weak var delegate: VoiceRendererDelegate?
+    weak var contentDelegate: VoiceRendererContentDelegate?
 
     @available(*, deprecated, message: "Use AgentVoiceController instead.")
     public init(agent: Agent, options: AgentVoiceControllerOptions = AgentVoiceControllerOptions(name: "Conversation")) {
@@ -427,6 +436,8 @@ public class VoiceRendererView: UIView, WKNavigationDelegate, WKScriptMessageHan
             if let height = body["height"] as? CGFloat {
                 delegate?.mobileRenderer(self, didChangeContentHeight: height)
             }
+            let cardRendered = body.keys.contains("cardRendered") ? (body["cardRendered"] as? Bool ?? false) : nil
+            contentDelegate?.voiceRenderer(self, didRenderAttachment: cardRendered)
 
         case "onError":
             let reason = body["reason"] as? String ?? "unknown-renderer-error"

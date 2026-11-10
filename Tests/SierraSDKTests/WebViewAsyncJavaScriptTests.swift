@@ -139,6 +139,74 @@ final class WebViewAsyncJavaScriptTests: XCTestCase {
     }
 
     @MainActor
+    func testSandboxedFrameCannotUseTheBridge() async throws {
+        let callbacks = SecretRecordingCallbacks()
+        var options = AgentChatControllerOptions(name: "Test")
+        options.conversationCallbacks = callbacks
+        let agent = Agent(config: AgentConfig(token: "test-token"))
+        // WebKit can defer loading a subframe indefinitely in a WebView that is not in a window.
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        defer { window.isHidden = true }
+        let (controller, webView) = try await makeController(script: "", options: options, agent: agent, window: window)
+
+        // Same shape as an MCP UI template: an opaque-origin srcdoc frame inside the embed page.
+        let sandboxedOutcomes = try await webView.callAsyncJavaScript(
+            """
+            return await new Promise(resolve => {
+              setTimeout(() => resolve(["timed out"]), 10000);
+              window.addEventListener("message", event => resolve(event.data));
+              const frame = document.createElement("iframe");
+              frame.setAttribute("sandbox", "allow-scripts");
+              frame.srcdoc = sandboxHTML;
+              document.body.appendChild(frame);
+            });
+            """,
+            arguments: [
+                "sandboxHTML": """
+                <script>
+                const handlers = window.webkit && window.webkit.messageHandlers;
+                if (!handlers) {
+                  parent.postMessage(["bridge unavailable"], "*");
+                } else {
+                  handlers.chatHandler.postMessage({ type: "storeValue", key: "sandbox-key", value: "x" });
+                  handlers.chatHandler.postMessage({ type: "onPrint", url: "https://attacker.example/", formData: "" });
+                  const outcome = promise => promise.then(() => "resolved", () => "rejected");
+                  Promise.all([
+                    outcome(handlers.chatReplyHandler.postMessage({ type: "onUserIdentityTokenExpiry" })),
+                    outcome(handlers.chatReplyHandler.postMessage({ type: "onSecretExpiry", secretName: "apiKey" })),
+                  ]).then(outcomes => parent.postMessage(outcomes, "*"));
+                }
+                </script>
+                """,
+            ],
+            in: nil,
+            contentWorld: .page
+        ) as? [String]
+
+        XCTAssertEqual(sandboxedOutcomes, ["rejected", "rejected"])
+        XCTAssertEqual(callbacks.identityRequests, 0)
+        XCTAssertEqual(callbacks.secretRequests, [])
+        XCTAssertNil(agent.getStorage().getItem("sandbox-key"))
+
+        let mainFrameSecret = try await webView.callAsyncJavaScript(
+            """
+            return await window.webkit.messageHandlers.chatReplyHandler.postMessage({
+              type: "onSecretExpiry", secretName: "apiKey"
+            });
+            """,
+            arguments: [:],
+            in: nil,
+            contentWorld: .page
+        ) as? String
+
+        XCTAssertEqual(mainFrameSecret, SecretRecordingCallbacks.secret)
+        XCTAssertEqual(callbacks.secretRequests, ["apiKey"])
+        // The window holds only the view, and the controller removes the bridge handlers when it
+        // deinitializes, so keep it alive until the bridge calls are done.
+        withExtendedLifetime(controller) {}
+    }
+
+    @MainActor
     func testIdentifiedReloadResumesTheLiveConversationAfterTargetResolves() async throws {
         let callbacks = RecordingConversationCallbacks()
         var options = AgentChatControllerOptions(name: "Test")
@@ -367,7 +435,8 @@ final class WebViewAsyncJavaScriptTests: XCTestCase {
         options: AgentChatControllerOptions = AgentChatControllerOptions(name: "Test"),
         conversationState: String? = nil,
         conversationID: String? = nil,
-        agent: Agent = Agent(config: AgentConfig(token: "test-token"))
+        agent: Agent = Agent(config: AgentConfig(token: "test-token")),
+        window: UIWindow? = nil
     ) async throws -> (AgentChatController, WKWebView) {
         let controller = AgentChatController(
             agent: agent,
@@ -375,7 +444,20 @@ final class WebViewAsyncJavaScriptTests: XCTestCase {
             conversationState: conversationState,
             conversationID: conversationID
         )
+        if window != nil {
+            // The controller reloads the chat URL when its color appearance changes, and entering
+            // a window would change it from unspecified.
+            controller.overrideUserInterfaceStyle = .light
+        }
         controller.loadViewIfNeeded()
+        if let window {
+            // Add only the view, because presenting the controller runs `viewWillAppear`, which
+            // loads the real chat URL. Lay out now so that any remaining trait update happens
+            // before the fixture loads.
+            window.addSubview(controller.view)
+            window.isHidden = false
+            window.layoutIfNeeded()
+        }
         let webView = try XCTUnwrap(findWebView(in: controller.view))
         let navigationWaiter = NavigationWaiter()
         try await navigationWaiter.load(
@@ -440,6 +522,27 @@ private final class RefreshingIdentityCallbacks: ConversationCallbacks {
     }
 }
 
+private final class SecretRecordingCallbacks: ConversationCallbacks {
+    static let secret = "refreshed-secret"
+    var identityRequests = 0
+    var secretRequests: [String] = []
+
+    func onSecretExpiry(
+        secretName: String,
+        replyHandler: @escaping (Result<String?, any Error>) -> Void
+    ) {
+        secretRequests.append(secretName)
+        replyHandler(.success(Self.secret))
+    }
+
+    func onUserIdentityTokenExpiry(
+        replyHandler: @escaping (Result<String?, any Error>) -> Void
+    ) {
+        identityRequests += 1
+        replyHandler(.success("identity-token"))
+    }
+}
+
 @MainActor
 private final class NavigationWaiter: NSObject, WKNavigationDelegate {
     private var continuation: CheckedContinuation<Void, Error>?
@@ -454,7 +557,8 @@ private final class NavigationWaiter: NSObject, WKNavigationDelegate {
 
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
-            navigation = webView.loadHTMLString(html, baseURL: nil)
+            // The bridge only answers the embed origin, so fixtures load as that origin.
+            navigation = webView.loadHTMLString(html, baseURL: URL(string: AgentAPIHost.prod.embedBaseURL))
         }
     }
 

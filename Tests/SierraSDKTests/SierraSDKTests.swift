@@ -4,6 +4,7 @@ import AVFoundation
 import UIKit
 import WebKit
 import XCTest
+import SierraChatKit
 @testable import SierraSDK
 @testable import SierraSDKVoice
 
@@ -876,6 +877,174 @@ final class SierraSDKTests: XCTestCase {
         XCTAssertEqual(callbacks.endCount, 1)
     }
 
+    @MainActor
+    func testFirstMessageHoldKeepsLoadingThroughGreetingUntilFirstCardRenders() async throws {
+        let (controller, session) = makeFirstMessageHoldController()
+
+        controller.voiceSession(session, didChangeState: .listening)
+        controller.voiceSessionDidStartInitialAudioPlayback(session)
+        controller.voiceSession(session, didReceiveAttachments: [firstMessageHoldCard])
+        await drainMainQueue()
+        let renderer = try XCTUnwrap(controller.view.firstDescendant(of: VoiceRendererView.self))
+        controller.voiceRenderer(renderer, didRenderAttachment: false)
+
+        assertFirstMessageHeld(controller)
+
+        controller.voiceRenderer(renderer, didRenderAttachment: true)
+
+        assertFirstMessageRevealed(controller)
+    }
+
+    @MainActor
+    func testFirstMessageHoldRevealsCardThatDrawsBeforeGreeting() async throws {
+        let (controller, session) = makeFirstMessageHoldController()
+        controller.voiceSession(session, didReceiveAttachments: [firstMessageHoldCard])
+        await drainMainQueue()
+        let renderer = try XCTUnwrap(controller.view.firstDescendant(of: VoiceRendererView.self))
+
+        controller.voiceRenderer(renderer, didRenderAttachment: true)
+
+        assertFirstMessageRevealed(controller)
+    }
+
+    @MainActor
+    func testFirstMessageHoldEndsOnFirstReportFromRendererWithoutCardFlag() async throws {
+        let (controller, session) = makeFirstMessageHoldController()
+        controller.voiceSession(session, didReceiveAttachments: [firstMessageHoldCard])
+        await drainMainQueue()
+        let renderer = try XCTUnwrap(controller.view.firstDescendant(of: VoiceRendererView.self))
+
+        controller.voiceRenderer(renderer, didRenderAttachment: nil)
+
+        assertFirstMessageRevealed(controller)
+    }
+
+    @MainActor
+    func testFirstMessageHoldEndsSoonAfterGreetingWithoutCard() async throws {
+        var scheduledTimeouts: [(TimeInterval, DispatchWorkItem)] = []
+        let (controller, session) = makeFirstMessageHoldController { scheduledTimeouts.append(($0, $1)) }
+        controller.voiceSessionDidStartInitialAudioPlayback(session)
+        await drainMainQueue()
+
+        assertFirstMessageHeld(controller)
+        guard scheduledTimeouts.count == 2 else {
+            return XCTFail("Expected the greeting to reschedule the hold timeout, got \(scheduledTimeouts.count) timeouts")
+        }
+        XCTAssertEqual(scheduledTimeouts[0].0, AgentVoiceController.firstMessageHoldTimeout, accuracy: 0.5)
+        XCTAssertEqual(scheduledTimeouts[1].0, AgentVoiceController.firstMessageHoldGreetingGrace, accuracy: 0.5)
+        XCTAssertTrue(scheduledTimeouts[0].1.isCancelled)
+
+        try XCTUnwrap(scheduledTimeouts.last).1.perform()
+
+        let root = controller.view!
+        XCTAssertFalse(root.firstDescendant(of: UIActivityIndicatorView.self)!.isAnimating)
+        XCTAssertTrue(root.firstDescendant(of: VoiceWaveformView.self)!.isVisible(in: root))
+        XCTAssertFalse(root.firstDescendant(of: VoiceRendererView.self)!.isVisible(in: root))
+    }
+
+    @MainActor
+    func testFirstMessageHoldEndsWhenSessionEndsOrFails() async {
+        for endHold in [
+            { (controller: AgentVoiceController, session: VoiceSessionManager) in
+                controller.voiceSession(session, didChangeState: .ended)
+            },
+            { (controller: AgentVoiceController, session: VoiceSessionManager) in
+                controller.voiceSession(session, didEncounterError: TestVoiceError.connectionFailed)
+            },
+        ] {
+            let (controller, session) = makeFirstMessageHoldController()
+            assertFirstMessageHeld(controller)
+
+            endHold(controller, session)
+            await drainMainQueue()
+
+            let root = controller.view!
+            XCTAssertFalse(root.firstDescendant(of: UIActivityIndicatorView.self)!.isAnimating)
+            XCTAssertFalse(root.firstDescendant(of: VoiceRendererView.self)!.isVisible(in: root))
+        }
+    }
+
+    @MainActor
+    func testFirstMessageHoldEndsOnRendererError() async throws {
+        let (controller, session) = makeFirstMessageHoldController()
+        controller.voiceSession(session, didReceiveAttachments: [firstMessageHoldCard])
+        controller.voiceSessionDidStartInitialAudioPlayback(session)
+        await drainMainQueue()
+        let renderer = try XCTUnwrap(controller.view.firstDescendant(of: VoiceRendererView.self))
+
+        controller.mobileRenderer(renderer, didEncounterError: NSError(domain: "test", code: 1))
+        await drainMainQueue()
+
+        let root = controller.view!
+        XCTAssertFalse(root.firstDescendant(of: UIActivityIndicatorView.self)!.isAnimating)
+        XCTAssertTrue(root.firstDescendant(of: VoiceWaveformView.self)!.isVisible(in: root))
+        XCTAssertFalse(renderer.isVisible(in: root))
+    }
+
+    @MainActor
+    func testFirstMessageHoldEndsOnFullscreenRequest() async throws {
+        let (controller, session) = makeFirstMessageHoldController()
+        controller.voiceSession(session, didReceiveAttachments: [firstMessageHoldCard])
+        await drainMainQueue()
+        let renderer = try XCTUnwrap(controller.view.firstDescendant(of: VoiceRendererView.self))
+
+        controller.mobileRenderer(renderer, didChangeDisplayMode: .fullscreen)
+        await drainMainQueue()
+
+        assertFirstMessageRevealed(controller)
+        XCTAssertFalse(try XCTUnwrap(renderer.superview).accessibilityElementsHidden)
+    }
+
+    private let firstMessageHoldCard: [String: Any] = ["type": "custom", "data": ["id": "card-1"]]
+
+    /// Starts the hold the way `startVoiceSession` does, without connecting a session.
+    @MainActor
+    private func makeFirstMessageHoldController(
+        scheduleTimeout: ((TimeInterval, DispatchWorkItem) -> Void)? = nil
+    ) -> (AgentVoiceController, VoiceSessionManager) {
+        var options = AgentVoiceControllerOptions(name: "Voice")
+        options.holdLoadingUntilFirstMessageRenders = true
+        let controller = AgentVoiceController(
+            agent: Agent(config: AgentConfig(token: "test-token")),
+            options: options,
+            automaticallyStartsVoiceSession: false
+        )
+        // Keeps the real 12 s timer from firing during a test.
+        controller.scheduleFirstMessageHoldTimeout = scheduleTimeout ?? { _, _ in }
+        controller.loadViewIfNeeded()
+        controller.beginFirstMessageHoldIfNeeded()
+        let session = VoiceSessionManager(config: AgentConfig(token: "test-token"), delegate: controller)
+        return (controller, session)
+    }
+
+    @MainActor
+    private func assertFirstMessageHeld(_ controller: AgentVoiceController, file: StaticString = #filePath, line: UInt = #line) {
+        let root = controller.view!
+        let spinner = root.firstDescendant(of: UIActivityIndicatorView.self)!
+        XCTAssertTrue(spinner.isAnimating && spinner.isVisible(in: root), file: file, line: line)
+        XCTAssertFalse(root.firstDescendant(of: VoiceWaveformView.self)!.isVisible(in: root), file: file, line: line)
+        // Laid out under the loading indicator, not hidden, so the page can draw its first card.
+        let renderer = root.firstDescendant(of: VoiceRendererView.self)
+        XCTAssertTrue(renderer?.isVisible(in: root) == true, file: file, line: line)
+    }
+
+    @MainActor
+    private func assertFirstMessageRevealed(_ controller: AgentVoiceController, file: StaticString = #filePath, line: UInt = #line) {
+        let root = controller.view!
+        XCTAssertFalse(root.firstDescendant(of: UIActivityIndicatorView.self)!.isVisible(in: root), file: file, line: line)
+        XCTAssertFalse(root.firstDescendant(of: VoiceWaveformView.self)!.isVisible(in: root), file: file, line: line)
+        XCTAssertTrue(root.firstDescendant(of: VoiceRendererView.self)!.isVisible(in: root), file: file, line: line)
+    }
+
+    @MainActor
+    private func drainMainQueue() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+    }
+
     func testInitialConversationStaysOutOfQueryItems() {
         var options = AgentChatControllerOptions(name: "Test")
         options.userIdentityToken = "user-identity-token"
@@ -1314,5 +1483,30 @@ private final class CapturingVoiceCallbacks: VoiceCallbacks {
     func onVoiceError(error: Error) {
         errorCount += 1
         lastError = error
+    }
+}
+
+private extension UIView {
+    func firstDescendant<T: UIView>(of type: T.Type) -> T? {
+        for subview in subviews {
+            if let match = subview as? T ?? subview.firstDescendant(of: type) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    func isVisible(in root: UIView) -> Bool {
+        var view: UIView? = self
+        while let current = view {
+            if current.isHidden || current.alpha == 0 {
+                return false
+            }
+            if current === root {
+                return true
+            }
+            view = current.superview
+        }
+        return false
     }
 }

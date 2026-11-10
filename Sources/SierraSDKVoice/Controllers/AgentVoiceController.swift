@@ -514,6 +514,19 @@ public struct AgentVoiceControllerOptions {
     /// When true, adds a text input and conversation-event transcript to the native voice surface.
     public var enableTextInput: Bool = false
 
+    /// When true, keeps the loading indicator on screen from the start of the voice session until
+    /// the agent's first message renders, instead of switching to the waveform and
+    /// `voicePlaceholderText` when the greeting starts. The message renders when its first
+    /// attachment draws (a loading card counts; an "attachment unavailable" box doesn't) or asks to
+    /// go fullscreen. Greeting audio can play while it waits. The wait also ends on a renderer
+    /// error, a session error, the end of the call, 5 seconds after greeting audio starts, or 12
+    /// seconds after the voice session starts, whichever comes first. When the wait ends, the
+    /// screen shows what it would show with this option off. While waiting, the loading screen
+    /// uses `backgroundColor` if it is opaque, and `UIColor.systemBackground` otherwise. Has no
+    /// effect when `enableTextInput` is true, since the transcript would show the message first.
+    /// Defaults to `false`.
+    public var holdLoadingUntilFirstMessageRenders: Bool = false
+
     /// When true, uses compact mute and end-call controls, keeping them beside the text composer.
     public var useCompactControls: Bool = false
 
@@ -623,7 +636,7 @@ public extension AgentVoiceControllerOptions {
 /// (SVP WebSocket), while attachments are rendered by a VoiceRendererView
 /// that loads the agent's web bundle directly -- no conversation state, no
 /// credential seeding, no refresh polling.
-public class AgentVoiceController: UIViewController, VoiceSessionDelegate, VoiceRendererDelegate {
+public class AgentVoiceController: UIViewController, VoiceSessionDelegate, VoiceRendererDelegate, VoiceRendererContentDelegate {
     private let agent: Agent
     internal private(set) var options: AgentVoiceControllerOptions
     private var voiceSession: VoiceSessionManager?
@@ -712,6 +725,23 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
     private var hasReceivedInitialAudioMessage = false
     private var initialGreetingFallbackWorkItem: DispatchWorkItem?
     private let initialGreetingFallbackDelay: TimeInterval = 2.0
+    /// Set while `holdLoadingUntilFirstMessageRenders` keeps the loading indicator over the renderer.
+    /// System uptime, like Android's, so a wall-clock change can't move the timeout.
+    private var firstMessageHoldDeadline: TimeInterval?
+    private var isHoldingLoadingForFirstMessage: Bool { firstMessageHoldDeadline != nil }
+    /// An attachment arrived while the hold was on; the hold defers its reveal.
+    private var hasAttachmentAwaitingReveal = false
+    private var firstMessageHoldTimeoutWorkItem: DispatchWorkItem?
+    /// Covers the start turn's lookups, a cold renderer load, and the first card render with
+    /// headroom, while still recovering from a missing card before the screen looks stuck.
+    static let firstMessageHoldTimeout: TimeInterval = 12.0
+    /// How long the hold continues once greeting audio plays, so an agent that sends no opening
+    /// card doesn't leave the spinner up for most of its greeting.
+    static let firstMessageHoldGreetingGrace: TimeInterval = 5.0
+    /// Internal so tests can run the timeout without waiting for it.
+    var scheduleFirstMessageHoldTimeout: (TimeInterval, DispatchWorkItem) -> Void = { delay, workItem in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
     private var automaticallyStartsVoiceSession = true
 
     private var shouldHideTitleBar: Bool {
@@ -813,6 +843,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
 
     deinit {
         cancelInitialGreetingFallback()
+        firstMessageHoldTimeoutWorkItem?.cancel()
         shutdownVoiceSessionIfNeeded(closeReason: dismissalCloseReason)
         fireDismissedIfNeeded()
     }
@@ -849,6 +880,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
         if options.enableTextInput {
             ensureVoiceRendererLoaded()
         }
+        beginFirstMessageHoldIfNeeded()
         session.connect()
         updateUI(for: .connecting)
     }
@@ -909,6 +941,11 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
 
     public func voiceSessionDidStartInitialAudioPlayback(_ session: VoiceSessionManager) {
         DispatchQueue.main.async {
+            if let deadline = self.firstMessageHoldDeadline {
+                self.armFirstMessageHoldTimeout(
+                    until: min(deadline, ProcessInfo.processInfo.systemUptime + Self.firstMessageHoldGreetingGrace)
+                )
+            }
             self.markInitialGreetingReceivedIfNeeded()
         }
     }
@@ -1055,6 +1092,10 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
 
     private func revealRendererContentIfNeeded() {
         guard !hasShownFirstAttachment else { return }
+        if isHoldingLoadingForFirstMessage {
+            hasAttachmentAwaitingReveal = true
+            return
+        }
         hasShownFirstAttachment = true
         placeholderContainer.isHidden = true
         placeholderWaveform?.resetLevels()
@@ -1124,17 +1165,25 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
             delegate: self,
             supportsFullscreen: true
         )
+        rendererView.contentDelegate = self
         rendererView.backgroundColor = options.voiceStyle.backgroundColor
         self.renderer = rendererView
 
         let containerView = UIView()
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.backgroundColor = options.voiceStyle.rendererBackgroundColor ?? options.voiceStyle.backgroundColor
-        containerView.isHidden = true
+        // A held renderer stays laid out and drawing under the loading indicator; a hidden web view
+        // may never report its first card.
+        containerView.isHidden = !isHoldingLoadingForFirstMessage
+        containerView.accessibilityElementsHidden = isHoldingLoadingForFirstMessage
         containerView.layer.cornerCurve = .continuous
         containerView.layer.masksToBounds = true
         rendererContainer = containerView
-        view.addSubview(containerView)
+        if isHoldingLoadingForFirstMessage {
+            view.insertSubview(containerView, belowSubview: placeholderContainer)
+        } else {
+            view.addSubview(containerView)
+        }
 
         let fullscreenBar = makeRendererFullscreenBar()
         rendererFullscreenBar = fullscreenBar
@@ -1433,9 +1482,31 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
         // Layout is handled by the WebView's scroll view
     }
 
+    func voiceRenderer(_ renderer: VoiceRendererView, didRenderAttachment cardRendered: Bool?) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        // nil comes from renderers that predate `cardRendered`; their first report ends the hold.
+        guard cardRendered != false, isHoldingLoadingForFirstMessage else { return }
+        endFirstMessageHoldOnRenderedContent()
+    }
+
+    private func endFirstMessageHoldOnRenderedContent() {
+        // Something drew, so end on it even if its attachment never passed through the reveal gate.
+        hasAttachmentAwaitingReveal = true
+        endFirstMessageHold()
+        // The drawn card stands in for the greeting, matching Android, where it keeps a recreated
+        // view from showing the loading indicator again.
+        markInitialGreetingReceivedIfNeeded()
+    }
+
     public func mobileRenderer(_ renderer: VoiceRendererView, didChangeDisplayMode displayMode: VoiceRendererDisplayMode) {
         DispatchQueue.main.async {
-            self.setRendererFullscreen(self.controlState == .active && displayMode == .fullscreen)
+            let fullscreen = self.controlState == .active && displayMode == .fullscreen
+            // Only a mounted attachment asks for fullscreen, so the request ends the hold like a
+            // drawn card does, and the renderer never goes fullscreen above the cover.
+            if fullscreen, self.isHoldingLoadingForFirstMessage {
+                self.endFirstMessageHoldOnRenderedContent()
+            }
+            self.setRendererFullscreen(fullscreen)
         }
     }
 
@@ -1443,6 +1514,9 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
         debugLog("AgentVoiceController: renderer error: \(error)")
         rendererFailed = true
         DispatchQueue.main.async {
+            // A failed renderer has nothing to reveal.
+            self.hasAttachmentAwaitingReveal = false
+            self.endFirstMessageHold()
             self.setRendererFullscreen(false)
             self.rendererContainer?.isHidden = true
             self.placeholderContainer.isHidden = false
@@ -2012,6 +2086,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
             cancelInitialGreetingFallback()
             refreshActiveControls()
         case .ended:
+            endFirstMessageHold()
             setLoadingStateVisible(false)
             cancelInitialGreetingFallback()
             if isShowingReconnectingBanner {
@@ -2055,6 +2130,7 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
 
     private func showErrorState(message: String) {
         DispatchQueue.main.async {
+            self.endFirstMessageHold()
             self.setControlState(.errorAwaitingExit)
             self.latestInputAudioLevel = 0
             self.latestOutputAudioLevel = 0
@@ -2220,7 +2296,46 @@ public class AgentVoiceController: UIViewController, VoiceSessionDelegate, Voice
         initialGreetingFallbackWorkItem = nil
     }
 
+    /// Internal so tests can start the hold without connecting a voice session.
+    func beginFirstMessageHoldIfNeeded() {
+        guard options.holdLoadingUntilFirstMessageRenders, !options.enableTextInput else { return }
+        // The cover must be opaque to hide the renderer drawing underneath it.
+        let background = options.voiceStyle.backgroundColor
+        placeholderContainer.backgroundColor =
+            background.resolvedColor(with: traitCollection).cgColor.alpha >= 1 ? background : .systemBackground
+        armFirstMessageHoldTimeout(until: ProcessInfo.processInfo.systemUptime + Self.firstMessageHoldTimeout)
+        ensureVoiceRendererLoaded()
+    }
+
+    private func armFirstMessageHoldTimeout(until deadline: TimeInterval) {
+        firstMessageHoldDeadline = deadline
+        firstMessageHoldTimeoutWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.endFirstMessageHold()
+        }
+        firstMessageHoldTimeoutWorkItem = workItem
+        scheduleFirstMessageHoldTimeout(max(0, deadline - ProcessInfo.processInfo.systemUptime), workItem)
+    }
+
+    /// Ends the hold and shows what the screen would show without it: renderer content if an
+    /// attachment arrived, otherwise the loading or waveform state the greeting flags imply.
+    func endFirstMessageHold() {
+        guard isHoldingLoadingForFirstMessage else { return }
+        firstMessageHoldDeadline = nil
+        firstMessageHoldTimeoutWorkItem?.cancel()
+        firstMessageHoldTimeoutWorkItem = nil
+        placeholderContainer.backgroundColor = .clear
+        rendererContainer?.accessibilityElementsHidden = false
+        if hasAttachmentAwaitingReveal {
+            revealRendererContentIfNeeded()
+        } else {
+            rendererContainer?.isHidden = true
+        }
+        setLoadingStateVisible(!hasReceivedInitialGreeting)
+    }
+
     private func setLoadingStateVisible(_ visible: Bool) {
+        let visible = visible || isHoldingLoadingForFirstMessage
         loadingContainer.isHidden = !visible
         if !visible {
             updateWaveformCompositingBackdrop()

@@ -244,6 +244,10 @@ public struct AgentChatControllerOptions {
     /// scroll out of view.
     public var startAtTop: Bool = false;
 
+    /// Dismiss the on-screen keyboard after submitting a message. Tap the input to type again.
+    /// Defaults to false, keeping the input focused after sending.
+    public var dismissKeyboardOnSend: Bool = false
+
     /// When true, removes the divider (top border) drawn between the chat transcript and the
     /// message input area. Defaults to false.
     public var removeInputDivider: Bool = false;
@@ -578,6 +582,9 @@ extension AgentChatControllerOptions {
             queryItems.append(URLQueryItem(name: "canStartNewChat", value: "true"))
         }
 
+        if dismissKeyboardOnSend {
+            queryItems.append(URLQueryItem(name: "dismissKeyboardOnSend", value: "true"))
+        }
         if startAtTop {
             queryItems.append(URLQueryItem(name: "startAtTop", value: "true"))
         }
@@ -1248,7 +1255,32 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 
     // MARK: - WKScriptMessageHandler
 
+    /// WebKit exposes these handlers to every frame, including the opaque-origin sandbox that runs
+    /// customer MCP UI templates, so only the embed's main frame may use the bridge.
+    private func isTrustedBridgeMessage(_ message: WKScriptMessage) -> Bool {
+        guard message.frameInfo.isMainFrame, let trustedURL = URL(string: agent.config.url) else {
+            return false
+        }
+        return isTrustedEmbedOrigin(
+            scheme: message.frameInfo.securityOrigin.protocol,
+            host: message.frameInfo.securityOrigin.host,
+            port: message.frameInfo.securityOrigin.port,
+            trustedURL: trustedURL
+        )
+    }
+
+    private func isTrustedEmbedOrigin(scheme: String?, host: String?, port: Int, trustedURL: URL) -> Bool {
+        // WKSecurityOrigin reports 0 for a scheme's default port, as does a URL without one.
+        return scheme?.lowercased() == trustedURL.scheme?.lowercased()
+            && host?.lowercased() == trustedURL.host?.lowercased()
+            && port == (trustedURL.port ?? 0)
+    }
+
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard isTrustedBridgeMessage(message) else {
+            debugLog("Rejected bridge message from untrusted frame")
+            return
+        }
         guard let body = message.body as? [String: Any] else { return }
 
         if message.name == "chatHandler" {
@@ -1333,6 +1365,8 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     options.onConversationEnded?()
                     conversationEnded = true
                     updateActionMenu()
+                case "onNewConversation":
+                    optionsConversationCallbacks?.onNewConversation()
                 case "onShowConversationList":
                     leaveInitialConversation()
                     showingConversationList = true
@@ -1343,9 +1377,15 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     updateNavigationItems()
                     optionsConversationCallbacks?.onHideConversationList()
                 case "onPrint":
-                    if let url = body["url"] as? String,
-                       let formData = body["formData"] as? String {
-                        handlePrint(url: URL(string: url)!, formData: formData)
+                    if let urlString = body["url"] as? String,
+                       let formData = body["formData"] as? String,
+                       let url = URL(string: urlString),
+                       let trustedURL = URL(string: agent.config.url),
+                       url.scheme?.lowercased() == "https",
+                       isTrustedEmbedOrigin(scheme: url.scheme, host: url.host, port: url.port ?? 0, trustedURL: trustedURL) {
+                        handlePrint(url: url, formData: formData)
+                    } else {
+                        debugLog("Rejected onPrint with an invalid or off-origin URL")
                     }
                 case "storeValue":
                     if let key = body["key"] as? String, let value = body["value"] as? String {
@@ -1381,7 +1421,15 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     // MARK: - WKScriptMessageHandlerWithReply
 
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
-        guard let body = message.body as? [String: Any] else { return }
+        guard isTrustedBridgeMessage(message) else {
+            debugLog("Rejected bridge reply message from untrusted frame")
+            replyHandler(nil, "Untrusted frame")
+            return
+        }
+        guard let body = message.body as? [String: Any] else {
+            replyHandler(nil, "Invalid message")
+            return
+        }
 
         if message.name == "chatReplyHandler" {
             if let type = body["type"] as? String {
@@ -1450,9 +1498,12 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
                     replyHandler(nil, "Unknown message type: \(type)")
                     break
                 }
+            } else {
+                replyHandler(nil, "Invalid message")
             }
         } else {
             debugLog("Received unknown reply message: \(message.name)")
+            replyHandler(nil, "Invalid message")
         }
     }
 

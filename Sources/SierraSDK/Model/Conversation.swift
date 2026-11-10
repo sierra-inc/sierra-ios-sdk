@@ -60,7 +60,8 @@ public protocol ConversationCallbacks: AgentEventListener {
     /// Callback invoked when the user chatting with the virtual agent has requested a transfer to an
     /// external agent.
     func onConversationTransfer(transfer: ConversationTransfer)
-    /// Callback invoked when a conversation starts.
+    /// Called when a conversation ID becomes available for a new or reopened conversation.
+    /// To observe an explicit choice to start fresh before its ID exists, use onNewConversation().
     func onConversationStart(conversationID: String)
     /// Callback invoked when the virtual agent finishes replying to the user.
     /// Not invoked for the greeting message.
@@ -69,6 +70,11 @@ public protocol ConversationCallbacks: AgentEventListener {
     func onRequestEndConversationEnabledChange(_ enabled: Bool)
     /// Callback invoked when the conversation ends.
     func onConversationEnded()
+    /// Called when the user explicitly chooses to start a fresh conversation, before its first message
+    /// or conversation ID. Includes the post-end button, ChatKit action, and conversation list.
+    /// Not invoked on initial opening or when reopening an existing conversation.
+    /// Use onConversationStart(conversationID:) to receive the ID of a new or reopened conversation.
+    func onNewConversation()
     /// Callback invoked when the agent chat encounters a critical error and cannot begin the
     /// conversation. Return `true` if the host app handled the error, or `false` to let the SDK
     /// fall back to its built-in error UI.
@@ -93,6 +99,7 @@ public extension ConversationCallbacks {
     func onAgentMessageEnd() {}
     func onRequestEndConversationEnabledChange(_ enabled: Bool) {}
     func onConversationEnded() {}
+    func onNewConversation() {}
     func onConversationInitializationError() -> Bool { false }
     func onExternalAgentJoin(externalConversationID: String?, externalAgentID: String?) {}
     func onShowConversationList() {}
