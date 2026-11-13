@@ -1351,6 +1351,36 @@ final class SierraSDKTests: XCTestCase {
         return AgentChatController(agent: Agent(config: AgentConfig(token: "test-token")), options: options)
     }
 
+    func testSendsOnlyAppSetValues() throws {
+        var options = AgentChatControllerOptions(name: "")
+        options.errorMessage = "Try again"
+        options.chatStyle = ChatStyle(colors: ChatStyleColors(userBubble: .systemIndigo))
+
+        func sentColorKeys(_ appearance: UIUserInterfaceStyle) throws -> Set<String> {
+            var items: [URLQueryItem] = []
+            UITraitCollection(userInterfaceStyle: appearance).performAsCurrent {
+                items = options.toQueryItems()
+            }
+            let brandValue = try XCTUnwrap(items.first { $0.name == "brand" }?.value?.data(using: .utf8))
+            let brand = try XCTUnwrap(JSONSerialization.jsonObject(with: brandValue) as? [String: Any])
+            XCTAssertEqual(items.first { $0.name == "explicitBrand" }?.value, "true")
+            XCTAssertEqual(items.first { $0.name == "colorScheme" }?.value, appearance == .dark ? "dark" : "light")
+            XCTAssertEqual(items.first { $0.name == "chatInterfaceStrings" }?.value, "{}")
+            XCTAssertEqual(Set(brand.keys), ["errorMessage", "chatStyle"])
+            let styleData = try XCTUnwrap((brand["chatStyle"] as? String)?.data(using: .utf8))
+            let style = try XCTUnwrap(JSONSerialization.jsonObject(with: styleData) as? [String: Any])
+            return Set(try XCTUnwrap(style["colors"] as? [String: String]).keys)
+        }
+
+        // Dynamic system defaults must compare equal to themselves, leaving only the app's color.
+        XCTAssertEqual(try sentColorKeys(.light), ["userBubble"])
+        // Agent Studio has no dark palette, so dark mode sends every system color, as before.
+        XCTAssertTrue(try sentColorKeys(.dark).isSuperset(of: ["background", "userBubble", "assistantBubble"]))
+        // Without Agent Studio styling, light mode also sends every color to keep the SDK's palette.
+        options.useConfiguredStyle = false
+        XCTAssertTrue(try sentColorKeys(.light).isSuperset(of: ["background", "userBubble", "assistantBubble"]))
+    }
+
     private func findWebView(in view: UIView) -> WKWebView? {
         if let webView = view as? WKWebView {
             return webView

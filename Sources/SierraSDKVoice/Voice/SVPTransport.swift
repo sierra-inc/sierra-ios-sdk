@@ -31,14 +31,19 @@ protocol SVPTransportDelegate: AnyObject {
 /// - enforcing idempotent transport shutdown semantics
 final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDelegate {
     private let config: AgentConfig
-    weak var delegate: SVPTransportDelegate?
 
     /// Guarded by `stateLock`: the URLSession delegate queue, the keepalive queue, the session
     /// manager's queue, and audio threads all read these.
+    private weak var _delegate: SVPTransportDelegate?
     private var _webSocketTask: URLSessionWebSocketTask?
     private var _urlSession: URLSession?
     private var _isRunning = false
     private let stateLock = NSLock()
+
+    var delegate: SVPTransportDelegate? {
+        get { withStateLock { _delegate } }
+        set { withStateLock { _delegate = newValue } }
+    }
 
     private var webSocketTask: URLSessionWebSocketTask? {
         get { withStateLock { _webSocketTask } }
@@ -126,11 +131,12 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
     func disconnect(sendCloseMessage: Bool = true, closeReason: String = AgentVoiceCloseReason.normal.rawValue) {
         isRunning = false
         if sendCloseMessage {
-            sendClose(reason: closeReason) { [weak self] in
-                self?.shutdownTransportIfNeeded()
+            // Strong, like the receive loop: these can run while the transport is being freed.
+            sendClose(reason: closeReason) { [self] in
+                self.shutdownTransportIfNeeded()
             }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                self?.shutdownTransportIfNeeded()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.25) { [self] in
+                self.shutdownTransportIfNeeded()
             }
         } else {
             shutdownTransportIfNeeded()
@@ -235,9 +241,11 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
     }
 
     private func receiveMessages() {
-        guard isRunning else { return }
-        webSocketTask?.receive { [weak self] result in
-            guard let self else { return }
+        guard isRunning, let task = webSocketTask else { return }
+        // Strong so the transport outlives its pending receive: a weak load here crashed while
+        // Firebase Performance tore down the freed, swizzled delegate on another thread. Shutdown
+        // cancels the task, which fails the receive and ends the loop.
+        task.receive { [self] result in
             switch result {
             case .success(let message):
                 guard self.isRunning else { return }
@@ -256,8 +264,8 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
                 debugLog("SVP recv error: \(error)")
                 // A receive failure after a close frame is the close, not a lost connection. 1006
                 // (abnormal closure) is never sent in a close frame; it means the socket died.
-                if let closeCode = self.webSocketTask?.closeCode, closeCode != .invalid, closeCode != .abnormalClosure {
-                    self.reportClose(closeCode)
+                if task.closeCode != .invalid, task.closeCode != .abnormalClosure {
+                    self.reportClose(task.closeCode)
                 } else {
                     self.reportConnectionLoss(error)
                 }
@@ -326,8 +334,8 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
         guard isRunning, keepaliveTimer != nil, let task = webSocketTask else { return }
         pingSequence += 1
         let sequence = pingSequence
-        task.sendPing { [weak self] error in
-            guard let self else { return }
+        // Strong for the same reason as the receive loop; cancelling the task completes the ping.
+        task.sendPing { [self] error in
             self.keepaliveQueue.async {
                 self.answeredPingSequence = max(self.answeredPingSequence, sequence)
                 if let error {
@@ -336,8 +344,8 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
                 }
             }
         }
-        keepaliveQueue.asyncAfter(deadline: .now() + Self.pongTimeout) { [weak self] in
-            guard let self, self.answeredPingSequence < sequence, self.keepaliveTimer != nil else { return }
+        keepaliveQueue.asyncAfter(deadline: .now() + Self.pongTimeout) { [self] in
+            guard self.answeredPingSequence < sequence, self.keepaliveTimer != nil else { return }
             debugLog("SVP: No keepalive pong within \(Self.pongTimeout)s")
             self.reportConnectionLoss(URLError(.timedOut))
         }
@@ -361,7 +369,9 @@ final class SVPTransport: NSObject, URLSessionDelegate, URLSessionWebSocketDeleg
             return (_webSocketTask, _urlSession)
         }
         task?.cancel(with: .normalClosure, reason: nil)
-        session?.invalidateAndCancel()
+        // The task is already cancelled. Let the session deliver its final callbacks before it
+        // releases its delegate.
+        session?.finishTasksAndInvalidate()
     }
 
     private func withStateLock<T>(_ block: () -> T) -> T {

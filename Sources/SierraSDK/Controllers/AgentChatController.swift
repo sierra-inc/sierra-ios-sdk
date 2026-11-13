@@ -95,69 +95,66 @@ public struct AgentChatControllerOptions {
     /// Name for this virtual agent, displayed as the navigation item title.
     public let name: String
 
-    /// Use chat interface strings configured on the server (greeting, error messages, etc.),
-    /// including server-managed locale/direction settings for those strings.
-    /// When enabled, server-configured values take precedence over local string options.
-    public var useConfiguredChatStrings: Bool = false
+    /// Deprecated: Agent Studio chat strings are used by default, and this option will be removed
+    /// in a future release. Set chat strings in these options to override Agent Studio instead.
+    /// When false, Agent Studio chat strings, including its locale and text direction settings,
+    /// are not used.
+    @available(*, deprecated, message: "Agent Studio chat strings are used by default, and this option will be removed in a future release. Remove this line, and set chat strings in AgentChatControllerOptions to override Agent Studio.")
+    public var useConfiguredChatStrings: Bool = true
 
-    /// Use styling configured on the server (colors, typography, logo, etc.).
-    /// When enabled, non-empty server-configured style fields take precedence over the corresponding
-    /// local fields. Local values remain as fallbacks.
-    ///
-    /// Note: iOS hides the title bar in the web view by default and uses the native UINavigationBar
-    /// instead. The native navigation bar colors are still configured via chatStyle.colors.titleBar
-    /// and chatStyle.colors.titleBarText, which remain necessary for iOS even when using
-    /// server-configured styles.
-    public var useConfiguredStyle: Bool = false
+    /// Deprecated: Agent Studio styling is used by default, and this option will be removed in a
+    /// future release. Set styles in these options to override Agent Studio instead. When false,
+    /// Agent Studio styling (colors, typography, logo, etc.) is not used, and the chat uses only
+    /// chatStyle and the other style options.
+    @available(*, deprecated, message: "Agent Studio styling is used by default, and this option will be removed in a future release. Remove this line, and set chatStyle and the other style options to override Agent Studio.")
+    public var useConfiguredStyle: Bool = true
 
-    /// Message shown from the agent when starting the conversation. Overridden by server-configured
-    /// greeting message if useConfiguredChatStrings is true.
+    /// Message shown from the agent when starting the conversation. When left at its default, the
+    /// Agent Studio value or a translated default is used.
     public var greetingMessage: String = "How can I help you today?"
 
-    /// Secondary text to display above the agent message at the start of a conversation. Overridden
-    /// by server-configured disclosure if useConfiguredChatStrings is true.
+    /// Secondary text to display above the agent message at the start of a conversation. When not
+    /// set, the Agent Studio disclosure is used.
     public var disclosure: String?
 
     /// Message shown when an error is encountered during the conversation unless the server
-    /// provided an alternate message to display. Overridden by server-configured error message if
-    /// useConfiguredChatStrings is true.
+    /// provided an alternate message to display. When left at its default, the Agent Studio value
+    /// or a translated default is used.
     public var errorMessage: String = "Oops, an error was encountered! Please try again."
 
-    // Message shown when a conversation was ended due to inactivity. Overridden by
-    // server-configured inactivity message if useConfiguredChatStrings is true.
+    // Message shown when a conversation was ended due to inactivity. When left at its default, the
+    // Agent Studio value or a translated default is used.
     public var inactivityMessage: String?
 
-    /// Message shown when waiting for a human agent to join the conversation. Overridden by
-    /// server-configured human agent transfer waiting message if useConfiguredChatStrings is true.
+    /// Message shown when waiting for a human agent to join the conversation. When left at its
+    /// default, the Agent Studio value or a translated default is used.
     public var humanAgentTransferWaitingMessage: String = "Waiting for agent…"
 
     /// Message shown when waiting for a human agent to join the conversation, and the queue size is
-    /// known. "{QUEUE_SIZE}" will be replaced with the size of the queue. Overridden by
-    /// server-configured human agent transfer queue size message if useConfiguredChatStrings is
-    /// true.
+    /// known. "{QUEUE_SIZE}" will be replaced with the size of the queue. When left at its default,
+    /// the Agent Studio value or a translated default is used.
     public var humanAgentTransferQueueSizeMessage: String = "Queue Size: {QUEUE_SIZE}"
 
     /// Message shown when waiting for a human agent to join the conversation, and the user is next
-    /// in line. Overridden by server-configured human agent transfer queue next message if
-    /// useConfiguredChatStrings is true.
+    /// in line. When left at its default, the Agent Studio value or a translated default is used.
     public var humanAgentTransferQueueNextMessage: String = "You are next in line"
 
-    /// Message shown when a human agent has joined the conversation. Overridden by
-    /// server-configured human agent transfer joined message if useConfiguredChatStrings is true.
+    /// Message shown when a human agent has joined the conversation. When left at its default, the
+    /// Agent Studio value or a translated default is used.
     public var humanAgentTransferJoinedMessage: String = "Agent connected"
 
-    /// Message shown when a human agent has left the conversation. Overridden by server-configured
-    /// human agent transfer left message if useConfiguredChatStrings is true.
+    /// Message shown when a human agent has left the conversation. When left at its default, the
+    /// Agent Studio value or a translated default is used.
     public var humanAgentTransferLeftMessage: String = "Agent disconnected"
 
-    /// Placeholder value displayed in the chat input when it is empty. Overridden by
-    /// server-configured input placeholder if useConfiguredChatStrings is true. Defaults to
-    /// "Message…" when this value is empty.
+    /// Placeholder value displayed in the chat input when it is empty. When left at its default,
+    /// the Agent Studio value or a translated default is used. Defaults to "Message…" when this
+    /// value is empty.
     public var inputPlaceholder: String = ""
 
-    /// Shown in place of the chat input when the conversation has ended. Overridden by
-    /// server-configured conversation ended message if useConfiguredChatStrings is true. Defaults
-    /// to "Chat ended" when this value is empty.
+    /// Shown in place of the chat input when the conversation has ended. When left at its default,
+    /// the Agent Studio value or a translated default is used. Defaults to "Chat ended" when this
+    /// value is empty.
     public var conversationEndedMessage: String = ""
 
     /// Message shown when there is no internet connection.
@@ -168,36 +165,32 @@ public struct AgentChatControllerOptions {
 
     /// Customize the look and feel of the chat.
     ///
-    /// When useConfiguredStyle is true, the web content styling comes from the server.
-    /// However, this property is still used for native iOS UI elements:
+    /// Colors and typography set here take precedence over Agent Studio, which provides the rest.
+    /// This property is also used for native iOS UI elements:
     /// - colors.titleBar: Navigation bar background color
     /// - colors.titleBarText: Navigation bar text color
-    /// - colors.backgroundColor: Container view and WebView background color
     /// - colors.text: Loading spinner color, when it contrasts with colors.backgroundColor;
     ///   otherwise the spinner falls back to black or white against that background
     /// - typography.customFonts: Custom fonts to load for the web content
     public var chatStyle: ChatStyle = DEFAULT_CHAT_STYLE
 
-    /// Inline SVG markup for the chat send button. Replaces the default send arrow (including
-    /// its background) when provided. When both the SDK and server provide a value, the
-    /// server-configured value takes precedence if useConfiguredStyle is true.
+    /// Inline SVG markup for the chat send button. Replaces the default send arrow (including its
+    /// background) when provided. When set, this value takes precedence over Agent Studio.
     public var sendButtonSVG: String?
 
-    /// Inline SVG markup for the send button when it is disabled (e.g. the input is empty).
-    /// Falls back to sendButtonSVG when not provided. When both the SDK and server provide a value,
-    /// the server-configured value takes precedence if useConfiguredStyle is true.
+    /// Inline SVG markup for the send button when it is disabled (e.g. the input is empty). Falls
+    /// back to sendButtonSVG when not provided. When set, this value takes precedence over Agent
+    /// Studio.
     public var sendButtonDisabledSVG: String?
 
-    /// Inline SVG markup for the file upload button icon. Replaces only the default
-    /// photo/paperclip glyph; the button keeps its behavior and accessible label. Paths that use
-    /// `currentColor` (or omit a fill) take chatStyle.colors.uploadButtonIcon; explicit SVG colors
-    /// win. When both the SDK and server provide a value, the server-configured value takes
-    /// precedence if useConfiguredStyle is true.
+    /// Inline SVG markup for the file upload button icon. Replaces only the default photo/paperclip
+    /// glyph; the button keeps its behavior and accessible label. Paths that use `currentColor` (or
+    /// omit a fill) take chatStyle.colors.uploadButtonIcon; explicit SVG colors win. When set, this
+    /// value takes precedence over Agent Studio.
     public var uploadButtonIconSVG: String?
 
     /// Inline SVG markup for the icon shown next to live agent display names. Replaces the default
-    /// headset icon when provided. When both the SDK and server provide a value, the
-    /// server-configured value takes precedence if useConfiguredStyle is true.
+    /// headset icon when provided. When set, this value takes precedence over Agent Studio.
     public var liveAgentIconSVG: String?
 
     /// If set to true user will be able to save a conversation transcript via a menu item.
@@ -252,6 +245,10 @@ public struct AgentChatControllerOptions {
     /// message input area. Defaults to false.
     public var removeInputDivider: Bool = false;
 
+    /// Draw a 1pt title-bar divider using chatStyle.colors.border. Defaults to false.
+    /// Applies to the native navigation bar; hiding that bar also hides the divider.
+    public var showTitleBarDivider: Bool = false
+
     /// Prevent the message input from automatically receiving focus when chat loads.
     /// Defaults to false. Users can still tap the input to focus it and type.
     public var disableAutoFocus: Bool = false;
@@ -284,43 +281,41 @@ public struct AgentChatControllerOptions {
     /// Which view(s) the disclosure text is displayed in. Defaults to `.conversation`.
     public var disclosurePlacement: DisclosurePlacement = .conversation
 
-    /// Whether to show timestamps on chat messages. When useConfiguredStyle is true, a non-default
-    /// server-configured value takes precedence over this local value.
+    /// Whether to show timestamps on chat messages. When set, this value takes precedence over
+    /// Agent Studio.
     public var showTimestamps: Bool?
 
-    /// Whether to show speaker labels (e.g. the agent name) on chat messages. When
-    /// useConfiguredStyle is true, a non-default server-configured value takes precedence over this
-    /// local value.
+    /// Whether to show speaker labels (e.g. the agent name) on chat messages. When set, this value
+    /// takes precedence over Agent Studio.
     public var showSpeakerLabels: Bool?
 
     /// Whether to show per-message avatars for agents. When enabled, the chat shows avatars next to
-    /// live agent messages using image URLs provided by the contact center. If agentAvatarURL is also
-    /// set, that image is shown next to virtual agent messages. When useConfiguredStyle is true, a
-    /// non-default server-configured value takes precedence over this local value.
+    /// live agent messages using image URLs provided by the contact center. If agentAvatarURL is
+    /// also set, that image is shown next to virtual agent messages. When set, this value takes
+    /// precedence over Agent Studio.
     public var showAvatars: Bool?
 
-    /// Whether to hide all chat bubble tails. When useConfiguredStyle is true, a non-default
-    /// server-configured value takes precedence over this local value.
+    /// Whether to hide all chat bubble tails. When set, this value takes precedence over Agent
+    /// Studio.
     public var hideBubbleTails: Bool?
 
     /// HTTPS URL of an image to show next to virtual agent messages when showAvatars is enabled.
-    /// Values are trimmed and must be 2048 characters or fewer. When useConfiguredStyle is true, a
-    /// non-empty server-configured value takes precedence over this local value.
+    /// Values are trimmed and must be 2048 characters or fewer. When set, this value takes
+    /// precedence over Agent Studio.
     public var agentAvatarURL: String?
 
     /// Controls whether the message label (speaker name and timestamp) is shown above or below chat
-    /// message bubbles. When useConfiguredStyle is true, a non-default server-configured value takes
-    /// precedence over this local value.
+    /// message bubbles. When set, this value takes precedence over Agent Studio.
     public var messageLabelPlacement: MessageLabelPlacement = .default
 
     /// Whether chat interface strings (button labels, tooltips, etc.) and text direction are
-    /// automatically localized from the conversation locale at the start of the conversation.
-    /// When nil and useConfiguredChatStrings is true, the server-configured value is used.
+    /// automatically localized from the conversation locale at the start of the conversation. When
+    /// nil, the Agent Studio setting is used.
     public var autoDetectChatStrings: Bool?
 
     /// Whether chat interface strings (button labels, tooltips, etc.) and text direction are
-    /// automatically updated when the agent changes the conversation locale mid-conversation.
-    /// When nil and useConfiguredChatStrings is true, the server-configured value is used.
+    /// automatically updated when the agent changes the conversation locale mid-conversation. When
+    /// nil, the Agent Studio setting is used.
     public var autoUpdateChatStrings: Bool?
 
     /// Explicitly set the text direction of the chat window, taking precedence over
@@ -330,8 +325,7 @@ public struct AgentChatControllerOptions {
     /// - `.auto`: Text direction automatically follows the conversation locale.
     /// When nil, text direction follows the conversation locale if autoDetectChatStrings is
     /// active or once autoUpdateChatStrings applies a mid-conversation locale change.
-    /// Otherwise, follows the Agent Studio "Text direction" setting if
-    /// useConfiguredChatStrings is true; otherwise defaults to left-to-right.
+    /// Otherwise, follows the Agent Studio "Text direction" setting, or defaults to left-to-right.
     public var textDirection: TextDirection?
 
     /// Menu label for the conversation transcript saving item.
@@ -412,13 +406,15 @@ public struct AgentChatControllerOptions {
 
 private extension AgentChatControllerOptions {
     // A baseline instance with the hardcoded English defaults, used to detect which fields the
-    // caller has actually customized. When locale auto-detect or server-configured chat strings are
-    // enabled, any field still equal to its default is omitted so locale defaults or server values
-    // can take effect.
+    // caller has actually customized. Any field still equal to its default is omitted so Agent
+    // Studio values or locale defaults can take effect.
     static let defaults = AgentChatControllerOptions(name: "")
 
+    // The page applies Agent Studio's localization settings when either useConfigured option is on,
+    // so English defaults are sent only when both are off and nothing else localizes.
     var shouldOmitDefaultChatStrings: Bool {
         autoDetectChatStrings == true || autoUpdateChatStrings == true || useConfiguredChatStrings
+            || useConfiguredStyle
     }
 
     var hasCustomGreetingMessage: Bool {
@@ -426,13 +422,7 @@ private extension AgentChatControllerOptions {
     }
 
     var shouldUseGreetingMessageAsCustomGreeting: Bool {
-        if greetingMessage.isEmpty {
-            return false
-        }
-        if !shouldOmitDefaultChatStrings {
-            return true
-        }
-        return hasCustomGreetingMessage
+        !greetingMessage.isEmpty && (hasCustomGreetingMessage || !shouldOmitDefaultChatStrings)
     }
 }
 
@@ -454,20 +444,30 @@ extension AgentChatControllerOptions {
     func toQueryItems() -> [URLQueryItem] {
         var queryItems = [URLQueryItem]()
 
-        // Should match the web embed's Brand shape.
+        // Should match the web embed's Brand shape. With explicitBrand=true, the web embed treats
+        // every value here as set by the app, so it beats Agent Studio. Send only values the app
+        // changed from their defaults.
         var brand: [String: Any] = [
-            "botName": name,
             "greetingMessage": greetingMessage,
             "errorMessage": errorMessage,
-            "inactivityMessage": inactivityMessage ?? "",
             "agentTransferWaitingMessage": humanAgentTransferWaitingMessage,
             "agentTransferQueueSizeMessage": humanAgentTransferQueueSizeMessage,
             "agentTransferQueueNextMessage": humanAgentTransferQueueNextMessage,
             "agentJoinedMessage": humanAgentTransferJoinedMessage,
             "agentLeftMessage": humanAgentTransferLeftMessage,
-            "chatStyle": chatStyle.toJSONString(),
-            "messageLabelPlacement": messageLabelPlacement.rawValue,
         ]
+        if !name.isEmpty { brand["botName"] = name }
+        if let inactivityMessage { brand["inactivityMessage"] = inactivityMessage }
+        if messageLabelPlacement != .default { brand["messageLabelPlacement"] = messageLabelPlacement.rawValue }
+        // Agent Studio has only a light palette, so in dark mode send every system color, and the
+        // page uses these colors instead of Agent Studio's, as before Agent Studio styling. Without
+        // Agent Studio styling, also send every color so the page keeps the SDK's palette.
+        let isDarkMode = UITraitCollection.current.userInterfaceStyle == .dark
+        let omittingDefaultColors = useConfiguredStyle && !isDarkMode
+        let appStyle = chatStyle.toJSON(omittingDefaultColors: omittingDefaultColors)
+        if appStyle["type"] != nil || (appStyle["colors"] as? [String: Any])?.isEmpty == false {
+            brand["chatStyle"] = chatStyle.toJSONString(omittingDefaultColors: omittingDefaultColors)
+        }
         if let showTimestamps { brand["showTimestamps"] = showTimestamps }
         if let showSpeakerLabels { brand["showBotName"] = showSpeakerLabels }
         if let showAvatars { brand["showAvatars"] = showAvatars }
@@ -477,8 +477,7 @@ extension AgentChatControllerOptions {
         if let sendButtonDisabledSVG { brand["sendButtonDisabledSVG"] = sendButtonDisabledSVG }
         if let uploadButtonIconSVG { brand["uploadButtonIconSVG"] = uploadButtonIconSVG }
         if let liveAgentIconSVG { brand["liveAgentIconSVG"] = liveAgentIconSVG }
-        // If locale auto-detect or server-configured chat strings are enabled, remove any messages
-        // that are set to their default value so server-configured values or locale defaults can win.
+        // Remove messages set to their default value so Agent Studio values or locale defaults can win.
         if shouldOmitDefaultChatStrings {
             if !hasCustomGreetingMessage {
                 brand.removeValue(forKey: "greetingMessage")
@@ -515,11 +514,11 @@ extension AgentChatControllerOptions {
 
         // Subset of the ChatUiStrings type from chat/ui-strings.ts
         var chatInterfaceStrings: [String: Any] = [
-            "inputPlaceholder": inputPlaceholder,
-            "disclosure": disclosure ?? "",
-            "conversationEndedMessage": conversationEndedMessage,
             "newChatButtonLabel": newChatButtonLabel,
         ]
+        if !inputPlaceholder.isEmpty { chatInterfaceStrings["inputPlaceholder"] = inputPlaceholder }
+        if let disclosure { chatInterfaceStrings["disclosure"] = disclosure }
+        if !conversationEndedMessage.isEmpty { chatInterfaceStrings["conversationEndedMessage"] = conversationEndedMessage }
         if let label = confirmEndConversationDialogConfirmButtonLabel, !label.isEmpty {
             chatInterfaceStrings["confirmEndConversationDialogConfirmButtonLabel"] = label
         }
@@ -644,13 +643,16 @@ extension AgentChatControllerOptions {
             )
         }
 
+        // Embed pages treat a missing param as off, which older SDKs rely on.
         if useConfiguredChatStrings {
             queryItems.append(URLQueryItem(name: "useConfiguredChatStrings", value: "true"))
         }
-
         if useConfiguredStyle {
             queryItems.append(URLQueryItem(name: "useConfiguredStyle", value: "true"))
         }
+        // brand and chatInterfaceStrings hold only values the app set (see their construction).
+        queryItems.append(URLQueryItem(name: "explicitBrand", value: "true"))
+        queryItems.append(URLQueryItem(name: "colorScheme", value: isDarkMode ? "dark" : "light"))
 
         if let autoDetectChatStrings {
             queryItems.append(
@@ -797,6 +799,16 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = options.chatStyle.colors.titleBar
         appearance.titleTextAttributes[.foregroundColor] = options.chatStyle.colors.titleBarText
+        if options.showTitleBarDivider {
+            // Match the Web border fallback when the color is omitted from the style.
+            let color = (options.chatStyle.colors.border ?? UIColor(white: 221.0 / 255.0, alpha: 1))
+                .withAlphaComponent(1)
+            appearance.shadowColor = color
+            appearance.shadowImage = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { context in
+                color.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+            }
+        }
         navigationItem.standardAppearance = appearance
         navigationItem.scrollEdgeAppearance = appearance
         navigationItem.compactAppearance = appearance
@@ -887,37 +899,27 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
 #endif
     }
 
-    /// The native loading color. The web embed owns server-configured and translucent backgrounds.
-    /// A local color that cannot be read as RGBA stays opaque for backward compatibility.
-    private var nativeChatBackgroundColor: UIColor {
-        chatBackgroundIsOpaque ? options.chatStyle.colors.backgroundColor : .clear
-    }
-
-    /// Re-read after an appearance change rather than cached: a dynamic color can be opaque in one
-    /// appearance and translucent in the other.
-    private var chatBackgroundIsOpaque: Bool {
-        guard !options.useConfiguredStyle else { return false }
-        let background = options.chatStyle.colors.backgroundColor
-        return (background.rgbaComponents(using: traitCollection)?.alpha ?? 1) >= 1
-    }
-
+    /// With Agent Studio styling in light mode, the web embed paints the chat background, which can
+    /// come from Agent Studio, so the native layers stay clear. Otherwise the page uses only the
+    /// SDK's colors, so an opaque SDK background also paints the native layers while loading and
+    /// during overscroll, as before Agent Studio styling. Re-read after an appearance change: a
+    /// dynamic color can be opaque in one appearance and translucent in the other.
     private func applyChatBackgroundColor() {
-        let nativeBackground = nativeChatBackgroundColor
-        // Without this, WebKit paints an opaque backdrop over the app's content.
-        webView.isOpaque = chatBackgroundIsOpaque
+        let usesSDKColors = !options.useConfiguredStyle || traitCollection.userInterfaceStyle == .dark
+        let background = options.chatStyle.colors.backgroundColor
+        let isOpaque = usesSDKColors && (background.rgbaComponents(using: traitCollection)?.alpha ?? 1) >= 1
+        let nativeBackground = isOpaque ? background : .clear
+        // When false, WebKit does not paint an opaque backdrop over the app's content.
+        webView.isOpaque = isOpaque
         webView.backgroundColor = nativeBackground
         webView.scrollView.backgroundColor = nativeBackground
-        // Fills the rubber-band area beyond the page, which the web embed does not paint.
-        webView.underPageBackgroundColor = options.useConfiguredStyle
-            ? .clear
-            : options.chatStyle.colors.backgroundColor
+        webView.underPageBackgroundColor = usesSDKColors ? background : .clear
         viewIfLoaded?.backgroundColor = nativeBackground
     }
 
     public override func loadView() {
         // Create a container view to hold the webview with keyboard layout guide constraints
         let containerView = UIView()
-        containerView.backgroundColor = nativeChatBackgroundColor
 
         // Add webview to container
         webView.translatesAutoresizingMaskIntoConstraints = false
@@ -939,6 +941,7 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
         ])
 
         self.view = containerView
+        applyChatBackgroundColor()
     }
 
     public override func viewWillAppear(_ animated: Bool) {
@@ -1222,7 +1225,11 @@ public class AgentChatController: UIViewController, WKNavigationDelegate, WKScri
     /// dynamic, and because the controller's trait collection is not settled until it is in a
     /// window.
     private func startLoadingSpinner() {
-        loadingSpinner?.color = options.chatStyle.colors.loadingSpinnerColor(using: traitCollection)
+        // Over a clear native background, the spinner sits on the host app's surface, which the SDK
+        // cannot read, so use a gray that shows on both light and dark surfaces.
+        loadingSpinner?.color = webView.isOpaque
+            ? options.chatStyle.colors.loadingSpinnerColor(using: traitCollection)
+            : .systemGray
         loadingSpinner?.startAnimating()
     }
 

@@ -137,8 +137,8 @@ public struct ChatTextStyle {
     }
 }
 
-/// Typography settings for chat UI. When useConfiguredStyle is true in AgentChatControllerOptions,
-/// these settings are overridden by server-configured typography.
+/// Typography settings for chat UI. Values set here take precedence over Agent Studio, which
+/// provides the rest.
 public struct ChatStyleTypography {
     /// The font family, a comma-separated list of font names.
     /// Note: Data for custom fonts must be provided in the `customFonts` property.
@@ -249,8 +249,8 @@ public enum FontType: String {
     }
 }
 
-/// Color settings for chat UI. When useConfiguredStyle is true in AgentChatControllerOptions, these
-/// settings are overridden by server-configured colors.
+/// Color settings for chat UI. Values set here take precedence over Agent Studio, which provides
+/// the rest.
 ///
 /// Only `backgroundColor`, `assistantBubble`, `humanAgentBubble`, `userBubble`,
 /// `assistantBubbleBorder`, `humanAgentBubbleBorder`, `userBubbleBorder`, `inputPlaceholder`,
@@ -705,9 +705,15 @@ extension ChatStyleTypography {
 }
 
 extension ChatStyle {
-    package func toJSON() -> [String: Any] {
+    package func toJSON(omittingDefaultColors: Bool = false) -> [String: Any] {
+        var colorsJSON = colors.toJSON()
+        if omittingDefaultColors {
+            // Compare resolved hex values so dynamic system colors match their defaults.
+            let defaultColorsJSON = DEFAULT_CHAT_STYLE_COLORS.toJSON()
+            colorsJSON = colorsJSON.filter { defaultColorsJSON[$0.key] != .some($0.value) }
+        }
         var json: [String: Any] = [
-            "colors": colors.toJSON(),
+            "colors": colorsJSON,
         ]
         // Match the web embed's ChatStyle shape: serialize typography as "type".
         if let typography = typography {
@@ -716,9 +722,9 @@ extension ChatStyle {
         return json
     }
 
-    package func toJSONString() -> String {
+    package func toJSONString(omittingDefaultColors: Bool = false) -> String {
         do {
-            let jsonData = try JSONSerialization.data(withJSONObject: toJSON(), options: [])
+            let jsonData = try JSONSerialization.data(withJSONObject: toJSON(omittingDefaultColors: omittingDefaultColors), options: [])
             if let jsonString = String(data: jsonData, encoding: .utf8) {
                 return jsonString
             } else {
